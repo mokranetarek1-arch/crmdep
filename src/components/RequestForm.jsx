@@ -155,8 +155,8 @@ export default function RequestForm({ drivers = [] }) {
                 value={form.typeClient}
                 onChange={e => setForm({ ...form, typeClient: e.target.value })}
               >
-                <option>Client</option>
-                <option>Depanneur</option>
+                <option>B2C</option>
+                <option>B2B</option>
               </select>
             </div>
 
