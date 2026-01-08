@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { collection, getDocs } from "firebase/firestore";
+import { collection, getDocs, deleteDoc, doc } from "firebase/firestore";
 import { db } from "../firebase";
 
 export default function RequestTable() {
@@ -25,7 +25,7 @@ export default function RequestTable() {
     fetchData();
   }, []);
 
-  // verifier si la date est dans le mois actuel
+  // vérifier si la date est dans le mois actuel
   const isCurrentMonth = (dateStr) => {
     if (!dateStr) return false;
     const date = new Date(dateStr);
@@ -46,6 +46,18 @@ export default function RequestTable() {
 
     return matchDate && matchDay && matchMonth;
   });
+
+  // 🔹 حذف سجل
+  const handleDelete = async (id) => {
+    if (!window.confirm("Voulez-vous vraiment supprimer ce trajet ?")) return;
+    try {
+      await deleteDoc(doc(db, "requests", id));
+      setRows(prev => prev.filter(r => r.id !== id));
+    } catch (err) {
+      console.error(err);
+      alert("Erreur lors de la suppression");
+    }
+  };
 
   return (
     <div className="container-fluid mt-4">
@@ -102,7 +114,7 @@ export default function RequestTable() {
           <thead className="table-light">
             <tr>
               <th>Source</th>
-              <th>ID</th>
+              <th>ID Document</th>
               <th>Motif</th>
               <th>Départ</th>
               <th>Destination</th>
@@ -119,12 +131,13 @@ export default function RequestTable() {
               <th>Date</th>
               <th>Heure</th>
               <th>Note</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {filteredRows.length === 0 ? (
               <tr>
-                <td colSpan="18" className="text-center text-muted py-3">
+                <td colSpan="19" className="text-center text-muted py-3">
                   Aucun trajet trouvé
                 </td>
               </tr>
@@ -132,7 +145,7 @@ export default function RequestTable() {
               filteredRows.map((r) => (
                 <tr key={r.id}>
                   <td>{r.source}</td>
-                  <td>{r.id}</td>
+                  <td>{r.id}</td> {/* معرف المستند */}
                   <td>{r.motif}</td>
                   <td>{r.depart}</td>
                   <td>{r.destination}</td>
@@ -155,12 +168,20 @@ export default function RequestTable() {
                     </span>
                   </td>
                   <td>{r.dispatch}</td>
-                  <td>{r.chauffeur || "-"}</td>
+                  <td>{r.driverName || "-"}</td> {/* هنا اسم السائق */}
                   <td>{r.prix ? `${r.prix} DA` : "-"}</td>
                   <td>{r.panneType}</td>
                   <td>{r.date || "-"}</td>
                   <td>{r.heure || "-"}</td>
                   <td>{r.note || "-"}</td>
+                  <td>
+                    <button
+                      className="btn btn-sm btn-danger"
+                      onClick={() => handleDelete(r.id)}
+                    >
+                      Supprimer
+                    </button>
+                  </td>
                 </tr>
               ))
             )}
