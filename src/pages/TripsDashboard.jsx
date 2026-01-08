@@ -1,18 +1,19 @@
 import { useState, useEffect } from "react";
-import { collection, getDocs, deleteDoc, doc } from "firebase/firestore";
+import { collection, getDocs } from "firebase/firestore";
 import { db } from "../firebase";
 
 const COMMISSION_RATE = 0.1; // 10%
 
 // Helpers pour formater les dates
 const getDayKey = (date) => date.toISOString().split("T")[0];
-const getMonthKey = (date) => `${date.getFullYear()}-${date.getMonth() + 1}`;
+const getMonthKey = (date) => `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}`;
 
 export default function ConfirmedTrips() {
   const [trips, setTrips] = useState([]);
-  const [dailyIncome, setDailyIncome] = useState({});
-  const [monthlyIncome, setMonthlyIncome] = useState({});
+  const [dailyIncome, setDailyIncome] = useState([]);
+  const [monthlyIncome, setMonthlyIncome] = useState([]);
 
+  // 🔹 Récupérer les trajets confirmés depuis "requests"
   const fetchTrips = async () => {
     try {
       const snap = await getDocs(collection(db, "requests"));
@@ -38,10 +39,12 @@ export default function ConfirmedTrips() {
             destination: data.destination || "-",
             price,
             commission,
+            net: price - commission,
             status: data.status
           };
         })
-        .filter(t => t.status === "Confirmé"); // uniquement Confirmé
+        .filter(t => t.status === "Confirmé") // uniquement Confirmé
+        .sort((a, b) => b.date - a.date); // 🔹 tri par date descendante
 
       setTrips(confirmed);
       calculateIncome(confirmed);
@@ -51,7 +54,7 @@ export default function ConfirmedTrips() {
     }
   };
 
-  // 🔹 Calcul des revenus quotidiens et mensuels (basé sur commission seulement)
+  // 🔹 Calcul des revenus quotidiens et mensuels
   const calculateIncome = (data) => {
     const daily = {};
     const monthly = {};
@@ -60,26 +63,18 @@ export default function ConfirmedTrips() {
       const day = getDayKey(t.date);
       const month = getMonthKey(t.date);
 
-      daily[day] = (daily[day] || 0) + t.commission;
-      monthly[month] = (monthly[month] || 0) + t.commission;
+      daily[day] = (daily[day] || 0) + t.net;
+      monthly[month] = (monthly[month] || 0) + t.net;
     });
 
-    setDailyIncome(daily);
-    setMonthlyIncome(monthly);
-  };
+    // 🔹 transformer les objets en tableaux triés
+    const dailySorted = Object.entries(daily)
+      .sort((a, b) => new Date(b[0]) - new Date(a[0])); // plus récent en haut
+    const monthlySorted = Object.entries(monthly)
+      .sort((a, b) => new Date(b[0] + "-01") - new Date(a[0] + "-01"));
 
-  // 🔹 Supprimer une course
-  const handleDelete = async (id) => {
-    if (!window.confirm("Voulez-vous vraiment supprimer cette course ?")) return;
-
-    try {
-      await deleteDoc(doc(db, "requests", id));
-      alert("Course supprimée !");
-      fetchTrips(); // rafraîchir la liste
-    } catch (err) {
-      console.error("Erreur lors de la suppression:", err);
-      alert("Erreur lors de la suppression !");
-    }
+    setDailyIncome(dailySorted);
+    setMonthlyIncome(monthlySorted);
   };
 
   useEffect(() => {
@@ -99,7 +94,7 @@ export default function ConfirmedTrips() {
             <th>Destination</th>
             <th>Prix (DA)</th>
             <th>Commission (10%)</th>
-            <th>Action</th>
+            <th>Net</th>
           </tr>
         </thead>
         <tbody>
@@ -110,15 +105,8 @@ export default function ConfirmedTrips() {
               <td>{t.depart}</td>
               <td>{t.destination}</td>
               <td>{t.price} DA</td>
-              <td><b>{t.commission} DA</b></td>
-              <td>
-                <button
-                  className="btn btn-sm btn-danger"
-                  onClick={() => handleDelete(t.id)}
-                >
-                  Supprimer
-                </button>
-              </td>
+              <td>{t.commission} DA</td>
+              <td><b>{t.net} DA</b></td>
             </tr>
           ))}
         </tbody>
@@ -126,16 +114,16 @@ export default function ConfirmedTrips() {
 
       <hr />
 
-      <h3>📅 Revenus Journaliers (Commission)</h3>
+      <h3>📅 Revenus Journaliers</h3>
       <ul>
-        {Object.entries(dailyIncome).map(([day, total]) => (
+        {dailyIncome.map(([day, total]) => (
           <li key={day}>{day} : <b>{total} DA</b></li>
         ))}
       </ul>
 
-      <h3>📆 Revenus Mensuels (Commission)</h3>
+      <h3>📆 Revenus Mensuels</h3>
       <ul>
-        {Object.entries(monthlyIncome).map(([month, total]) => (
+        {monthlyIncome.map(([month, total]) => (
           <li key={month}>{month} : <b>{total} DA</b></li>
         ))}
       </ul>
