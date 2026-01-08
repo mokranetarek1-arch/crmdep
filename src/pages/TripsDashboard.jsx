@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { collection, getDocs } from "firebase/firestore";
+import { collection, getDocs, deleteDoc, doc } from "firebase/firestore";
 import { db } from "../firebase";
 
 const COMMISSION_RATE = 0.1; // 10%
@@ -13,7 +13,6 @@ export default function ConfirmedTrips() {
   const [dailyIncome, setDailyIncome] = useState({});
   const [monthlyIncome, setMonthlyIncome] = useState({});
 
-  // 🔹 Récupérer les trajets confirmés depuis "requests"
   const fetchTrips = async () => {
     try {
       const snap = await getDocs(collection(db, "requests"));
@@ -69,6 +68,20 @@ export default function ConfirmedTrips() {
     setMonthlyIncome(monthly);
   };
 
+  // 🔹 Supprimer une course
+  const handleDelete = async (id) => {
+    if (!window.confirm("Voulez-vous vraiment supprimer cette course ?")) return;
+
+    try {
+      await deleteDoc(doc(db, "requests", id));
+      alert("Course supprimée !");
+      fetchTrips(); // rafraîchir la liste
+    } catch (err) {
+      console.error("Erreur lors de la suppression:", err);
+      alert("Erreur lors de la suppression !");
+    }
+  };
+
   useEffect(() => {
     fetchTrips();
   }, []);
@@ -86,6 +99,7 @@ export default function ConfirmedTrips() {
             <th>Destination</th>
             <th>Prix (DA)</th>
             <th>Commission (10%)</th>
+            <th>Action</th>
           </tr>
         </thead>
         <tbody>
@@ -97,6 +111,14 @@ export default function ConfirmedTrips() {
               <td>{t.destination}</td>
               <td>{t.price} DA</td>
               <td><b>{t.commission} DA</b></td>
+              <td>
+                <button
+                  className="btn btn-sm btn-danger"
+                  onClick={() => handleDelete(t.id)}
+                >
+                  Supprimer
+                </button>
+              </td>
             </tr>
           ))}
         </tbody>
