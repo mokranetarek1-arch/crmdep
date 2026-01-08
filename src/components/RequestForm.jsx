@@ -16,7 +16,8 @@ export default function RequestForm({ drivers = [] }) {
     quantite: 1,
     status: "Annulé",
     dispatch: "Appelé",
-    chauffeur: "",
+    chauffeur: "",      // هنا نخزن driverId
+    driverName: "",     // هنا نخزن اسم السائق للعرض
     prix: "",
     panneType: "Panne",
     date: "",
@@ -33,13 +34,17 @@ export default function RequestForm({ drivers = [] }) {
     }
 
     try {
+      // 🔹 حفظ الطلب مع driverId و driverName
       await addDoc(collection(db, "requests"), {
         ...form,
+        driverId: form.chauffeur,
+        driverName: form.driverName,
         timestamp: serverTimestamp()
       });
 
       alert("Demande enregistrée avec succès !");
-      // Reset form
+
+      // إعادة تهيئة النموذج
       setForm({
         source: "Appel",
         id: "client",
@@ -54,6 +59,7 @@ export default function RequestForm({ drivers = [] }) {
         status: "Annulé",
         dispatch: "Appelé",
         chauffeur: "",
+        driverName: "",
         prix: "",
         panneType: "Panne",
         date: "",
@@ -83,7 +89,6 @@ export default function RequestForm({ drivers = [] }) {
               >
                 <option>Appel</option>
                 <option>Plateforme</option>
-                <option>Reseaux sociaux</option>
               </select>
             </div>
 
@@ -156,8 +161,8 @@ export default function RequestForm({ drivers = [] }) {
                 value={form.typeClient}
                 onChange={e => setForm({ ...form, typeClient: e.target.value })}
               >
-                <option>B2C</option>
-                <option>B2B</option>
+                <option>Client</option>
+                <option>Depanneur</option>
               </select>
             </div>
 
@@ -210,11 +215,18 @@ export default function RequestForm({ drivers = [] }) {
               <label className="form-label">Chauffeur</label>
               <select className="form-select"
                 value={form.chauffeur}
-                onChange={e => setForm({ ...form, chauffeur: e.target.value })}
+                onChange={e => {
+                  const selected = drivers.find(d => d.driverId === e.target.value);
+                  setForm({
+                    ...form,
+                    chauffeur: selected?.driverId || "",
+                    driverName: selected ? `${selected.firstName} ${selected.lastName}` : ""
+                  });
+                }}
               >
                 <option value="">-- Choisir un chauffeur --</option>
                 {drivers.map(d => (
-                  <option key={d.driverId} value={`${d.firstName} ${d.lastName}`}>
+                  <option key={d.driverId} value={d.driverId}>
                     {d.firstName} {d.lastName}
                   </option>
                 ))}
