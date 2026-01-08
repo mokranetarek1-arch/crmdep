@@ -188,7 +188,7 @@ export default function RequestForm({ drivers = [] }) {
               >
                 <option>Annulé</option>
                 <option>En cours</option>
-                <option>Terminé</option>
+                <option>Confirmé</option>
               </select>
             </div>
 
