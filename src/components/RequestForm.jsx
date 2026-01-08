@@ -83,6 +83,7 @@ export default function RequestForm({ drivers = [] }) {
               >
                 <option>Appel</option>
                 <option>Plateforme</option>
+                <option>Reseaux sociaux</option>
               </select>
             </div>
 
