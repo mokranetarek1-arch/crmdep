@@ -18,13 +18,13 @@ export default function DriverDetails() {
   const [months, setMonths] = useState([]);
   const [trips, setTrips] = useState([]);
   const [stats, setStats] = useState({ totalTrips: 0, totalCommission: 0 });
-  const [filterYear, setFilterYear] = useState(""); // للسنة
-  const [filterMonth, setFilterMonth] = useState(""); // للشهر
+  const [filterYear, setFilterYear] = useState("");
+  const [filterMonth, setFilterMonth] = useState("");
 
-  // جلب البيانات
+  // Fetch trips and payments
   const fetchData = async () => {
     try {
-      // 1️⃣ جلب الرحلات المؤكدة
+      // Fetch confirmed trips
       const rq = query(
         collection(db, "requests"),
         where("driverId", "==", driverId),
@@ -37,7 +37,7 @@ export default function DriverDetails() {
           const t = d.data();
           const price = Number(t.prix) || 0;
 
-          // حماية من undefined date
+          // Safe date handling
           const date = t.date?.toDate
             ? t.date.toDate()
             : t.date
@@ -52,11 +52,11 @@ export default function DriverDetails() {
             ...t
           };
         })
-        .sort((a, b) => b.date - a.date); // ترتيب من الأحدث
+        .sort((a, b) => b.date - a.date);
 
       setTrips(tripsData);
 
-      // 2️⃣ جلب المدفوعات
+      // Fetch driver payments
       const pq = query(
         collection(db, "driverPayments"),
         where("driverId", "==", driverId)
@@ -64,21 +64,19 @@ export default function DriverDetails() {
       const psnap = await getDocs(pq);
       const paidMonths = psnap.docs.map((d) => d.data());
 
-      // 3️⃣ تجميع شهري
+      // Aggregate monthly
       const map = {};
       tripsData.forEach((t) => {
         const year = t.date.getFullYear();
         const month = t.date.getMonth() + 1;
         const key = `${year}-${month}`;
-
         if (!map[key])
           map[key] = { year, month, totalCommission: 0, totalTrips: 0, regle: false };
-
         map[key].totalCommission += t.commission;
         map[key].totalTrips += 1;
       });
 
-      // 4️⃣ ربط حالة الدفع
+      // Link payments
       Object.values(map).forEach((m) => {
         const paid = paidMonths.find(
           (p) => p.year === m.year && p.month === m.month && p.regle
@@ -91,7 +89,7 @@ export default function DriverDetails() {
       );
       setMonths(result);
 
-      // إحصائيات إجمالية
+      // Overall stats
       setStats({
         totalTrips: tripsData.length,
         totalCommission: tripsData.reduce((s, t) => s + t.commission, 0)
@@ -102,10 +100,9 @@ export default function DriverDetails() {
     }
   };
 
-  // تسديد العمولة لشهر محدد
+  // Mark month as paid
   const markAsPaid = async (m) => {
     try {
-      // تحقق قبل الإضافة لتجنب تكرار الدفع
       const exists = months.find(
         (month) => month.year === m.year && month.month === m.month && month.regle
       );
@@ -130,7 +127,7 @@ export default function DriverDetails() {
     fetchData();
   }, [driverId]);
 
-  // فلترة الرحلات حسب السنة والشهر
+  // Filter trips
   const filteredTrips = trips.filter((t) => {
     const year = t.date.getFullYear();
     const month = t.date.getMonth() + 1;
@@ -138,7 +135,7 @@ export default function DriverDetails() {
            (filterMonth ? month === Number(filterMonth) : true);
   });
 
-  // توليد قائمة السنوات المتاحة للفلتر
+  // Years for filter
   const years = [...new Set(trips.map((t) => t.date.getFullYear()))].sort((a, b) => b - a);
 
   return (
@@ -161,7 +158,7 @@ export default function DriverDetails() {
         </div>
       </div>
 
-      {/* Tableau mensuel */}
+      {/* Monthly table */}
       <h5>📆 Commission Mensuelle</h5>
       <table className="table table-bordered mb-4">
         <thead>
@@ -188,10 +185,7 @@ export default function DriverDetails() {
               </td>
               <td>
                 {!m.regle && (
-                  <button
-                    className="btn btn-sm btn-success"
-                    onClick={() => markAsPaid(m)}
-                  >
+                  <button className="btn btn-sm btn-success" onClick={() => markAsPaid(m)}>
                     ✔ Régler
                   </button>
                 )}
@@ -201,7 +195,7 @@ export default function DriverDetails() {
         </tbody>
       </table>
 
-      {/* فلتر الرحلات */}
+      {/* Filter */}
       <div className="mb-3 d-flex gap-2">
         <select
           className="form-select w-auto"
@@ -223,15 +217,12 @@ export default function DriverDetails() {
             <option key={m} value={m}>{m}</option>
           ))}
         </select>
-        <button
-          className="btn btn-secondary"
-          onClick={() => { setFilterYear(""); setFilterMonth(""); }}
-        >
+        <button className="btn btn-secondary" onClick={() => { setFilterYear(""); setFilterMonth(""); }}>
           Réinitialiser
         </button>
       </div>
 
-      {/* Tableau الرحلات */}
+      {/* Trips table */}
       <h5>🚗 Liste des Trajets</h5>
       <table className="table table-bordered">
         <thead>
