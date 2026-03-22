@@ -32,12 +32,27 @@ export default function DriverDetails() {
       );
       const rsnap = await getDocs(rq);
 
-      const tripsData = rsnap.docs.map(d => {
-        const t = d.data();
-        const price = Number(t.prix) || 0;
-        const date = t.date?.toDate ? t.date.toDate() : new Date(t.date);
-        return { id: d.id, date, price, commission: price * COMMISSION_RATE, ...t };
-      }).sort((a, b) => b.date - a.date); // ترتيب من الأحدث
+      const tripsData = rsnap.docs
+        .map((d) => {
+          const t = d.data();
+          const price = Number(t.prix) || 0;
+
+          // حماية من undefined date
+          const date = t.date?.toDate
+            ? t.date.toDate()
+            : t.date
+            ? new Date(t.date)
+            : new Date();
+
+          return {
+            id: d.id,
+            date,
+            price,
+            commission: price * COMMISSION_RATE,
+            ...t
+          };
+        })
+        .sort((a, b) => b.date - a.date); // ترتيب من الأحدث
 
       setTrips(tripsData);
 
@@ -47,26 +62,33 @@ export default function DriverDetails() {
         where("driverId", "==", driverId)
       );
       const psnap = await getDocs(pq);
-      const paidMonths = psnap.docs.map(d => d.data());
+      const paidMonths = psnap.docs.map((d) => d.data());
 
       // 3️⃣ تجميع شهري
       const map = {};
-      tripsData.forEach(t => {
+      tripsData.forEach((t) => {
         const year = t.date.getFullYear();
         const month = t.date.getMonth() + 1;
         const key = `${year}-${month}`;
-        if (!map[key]) map[key] = { year, month, totalCommission: 0, totalTrips: 0, regle: false };
+
+        if (!map[key])
+          map[key] = { year, month, totalCommission: 0, totalTrips: 0, regle: false };
+
         map[key].totalCommission += t.commission;
         map[key].totalTrips += 1;
       });
 
       // 4️⃣ ربط حالة الدفع
-      Object.values(map).forEach(m => {
-        const paid = paidMonths.find(p => p.year === m.year && p.month === m.month && p.regle);
+      Object.values(map).forEach((m) => {
+        const paid = paidMonths.find(
+          (p) => p.year === m.year && p.month === m.month && p.regle
+        );
         if (paid) m.regle = true;
       });
 
-      const result = Object.values(map).sort((a, b) => b.year - a.year || b.month - a.month);
+      const result = Object.values(map).sort(
+        (a, b) => b.year - a.year || b.month - a.month
+      );
       setMonths(result);
 
       // إحصائيات إجمالية
@@ -82,14 +104,26 @@ export default function DriverDetails() {
 
   // تسديد العمولة لشهر محدد
   const markAsPaid = async (m) => {
-    await addDoc(collection(db, "driverPayments"), {
-      driverId,
-      year: m.year,
-      month: m.month,
-      regle: true,
-      paidAt: serverTimestamp()
-    });
-    fetchData();
+    try {
+      // تحقق قبل الإضافة لتجنب تكرار الدفع
+      const exists = months.find(
+        (month) => month.year === m.year && month.month === m.month && month.regle
+      );
+      if (exists) return;
+
+      await addDoc(collection(db, "driverPayments"), {
+        driverId,
+        year: m.year,
+        month: m.month,
+        regle: true,
+        paidAt: serverTimestamp()
+      });
+
+      fetchData();
+    } catch (err) {
+      console.error(err);
+      alert("Erreur lors du paiement");
+    }
   };
 
   useEffect(() => {
@@ -97,7 +131,7 @@ export default function DriverDetails() {
   }, [driverId]);
 
   // فلترة الرحلات حسب السنة والشهر
-  const filteredTrips = trips.filter(t => {
+  const filteredTrips = trips.filter((t) => {
     const year = t.date.getFullYear();
     const month = t.date.getMonth() + 1;
     return (filterYear ? year === Number(filterYear) : true) &&
@@ -105,7 +139,7 @@ export default function DriverDetails() {
   });
 
   // توليد قائمة السنوات المتاحة للفلتر
-  const years = [...new Set(trips.map(t => t.date.getFullYear()))].sort((a, b) => b - a);
+  const years = [...new Set(trips.map((t) => t.date.getFullYear()))].sort((a, b) => b - a);
 
   return (
     <div className="container mt-3">
@@ -122,7 +156,7 @@ export default function DriverDetails() {
         <div className="col-md-6">
           <div className="card p-3 text-center">
             <h6>Commission Totale</h6>
-            <h4>{stats.totalCommission} DA</h4>
+            <h4>{stats.totalCommission.toFixed(2)} DA</h4>
           </div>
         </div>
       </div>
@@ -140,11 +174,11 @@ export default function DriverDetails() {
           </tr>
         </thead>
         <tbody>
-          {months.map((m, i) => (
-            <tr key={i}>
+          {months.map((m) => (
+            <tr key={`${m.year}-${m.month}`}>
               <td>{m.month}/{m.year}</td>
               <td>{m.totalTrips}</td>
-              <td>{m.totalCommission} DA</td>
+              <td>{m.totalCommission.toFixed(2)} DA</td>
               <td>
                 {m.regle ? (
                   <span className="badge bg-success">RÉGLÉ</span>
@@ -154,7 +188,12 @@ export default function DriverDetails() {
               </td>
               <td>
                 {!m.regle && (
-                  <button className="btn btn-sm btn-success" onClick={() => markAsPaid(m)}>✔ Régler</button>
+                  <button
+                    className="btn btn-sm btn-success"
+                    onClick={() => markAsPaid(m)}
+                  >
+                    ✔ Régler
+                  </button>
                 )}
               </td>
             </tr>
@@ -164,17 +203,32 @@ export default function DriverDetails() {
 
       {/* فلتر الرحلات */}
       <div className="mb-3 d-flex gap-2">
-        <select className="form-select w-auto" value={filterYear} onChange={e => setFilterYear(e.target.value)}>
+        <select
+          className="form-select w-auto"
+          value={filterYear}
+          onChange={(e) => setFilterYear(e.target.value)}
+        >
           <option value="">Toutes les années</option>
-          {years.map(y => <option key={y} value={y}>{y}</option>)}
+          {years.map((y) => (
+            <option key={y} value={y}>{y}</option>
+          ))}
         </select>
-        <select className="form-select w-auto" value={filterMonth} onChange={e => setFilterMonth(e.target.value)}>
+        <select
+          className="form-select w-auto"
+          value={filterMonth}
+          onChange={(e) => setFilterMonth(e.target.value)}
+        >
           <option value="">Tous les mois</option>
-          {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+          {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
             <option key={m} value={m}>{m}</option>
           ))}
         </select>
-        <button className="btn btn-secondary" onClick={() => { setFilterYear(""); setFilterMonth(""); }}>Réinitialiser</button>
+        <button
+          className="btn btn-secondary"
+          onClick={() => { setFilterYear(""); setFilterMonth(""); }}
+        >
+          Réinitialiser
+        </button>
       </div>
 
       {/* Tableau الرحلات */}
@@ -190,13 +244,13 @@ export default function DriverDetails() {
           </tr>
         </thead>
         <tbody>
-          {filteredTrips.map(t => (
+          {filteredTrips.map((t) => (
             <tr key={t.id}>
-              <td>{t.date.toLocaleDateString()}</td>
+              <td>{t.date ? t.date.toLocaleDateString() : "-"}</td>
               <td>{t.depart || "-"}</td>
               <td>{t.destination || "-"}</td>
-              <td>{t.price} DA</td>
-              <td>{t.commission} DA</td>
+              <td>{t.price.toFixed(2)} DA</td>
+              <td>{t.commission.toFixed(2)} DA</td>
             </tr>
           ))}
         </tbody>
@@ -204,4 +258,3 @@ export default function DriverDetails() {
     </div>
   );
 }
-
