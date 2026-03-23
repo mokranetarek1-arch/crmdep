@@ -6,7 +6,8 @@ import {
   deleteDoc,
   doc,
   query,
-  where
+  where,
+  serverTimestamp
 } from "firebase/firestore";
 import { db } from "../firebase";
 
@@ -27,32 +28,25 @@ const parseDate = (t) => {
 // 🔹 Formatter
 const formatField = (value) => {
   if (value === null || value === undefined) return "-";
-
-  if (value instanceof Date) {
-    return value.toLocaleDateString("fr-FR");
-  }
-
+  if (value instanceof Date) return value.toLocaleDateString("fr-FR");
   if (value?.toDate) return value.toDate().toLocaleDateString("fr-FR");
-
   if (Array.isArray(value)) return value.map(v => formatField(v)).join(", ");
-
   if (typeof value === "object") return "-";
-
   return String(value);
 };
 
-// 🔹 Month key FIX
+// 🔹 Month key
 const getMonthKey = (date) => {
   if (!date) return null;
-  return `${date.getFullYear()}-${(date.getMonth() + 1)
-    .toString()
-    .padStart(2, "0")}`;
+  const d = date instanceof Date ? date : date.toDate ? date.toDate() : new Date(date);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 };
 
 export default function Drivers() {
   const [drivers, setDrivers] = useState([]);
   const [selectedDriver, setSelectedDriver] = useState(null);
   const [driverTrips, setDriverTrips] = useState([]);
+  const [allTrips, setAllTrips] = useState([]); // جلب جميع الرحلات مرة واحدة
   const [driverStats, setDriverStats] = useState({
     totalTrips: 0,
     totalCommission: 0,
@@ -69,16 +63,14 @@ export default function Drivers() {
   });
 
   const [paidTotal, setPaidTotal] = useState(0);
-  const [monthFilter, setMonthFilterLocal] = useState(""); // يمكن استخدامه لاحقًا للتصفية
+  const [paidByMonth, setPaidByMonth] = useState({});
+  const [monthFilter, setMonthFilter] = useState("");
 
   // 🔹 fetch drivers
   const fetchDrivers = async () => {
     try {
       const snapshot = await getDocs(collection(db, "drivers"));
-      const data = snapshot.docs.map(d => ({
-        driverId: d.id,
-        ...d.data()
-      }));
+      const data = snapshot.docs.map(d => ({ driverId: d.id, ...d.data() }));
       setDrivers(data);
     } catch (err) {
       console.error(err);
@@ -86,9 +78,7 @@ export default function Drivers() {
     }
   };
 
-  useEffect(() => {
-    fetchDrivers();
-  }, []);
+  useEffect(() => { fetchDrivers(); }, []);
 
   // 🔹 add driver
   const handleAddDriver = async () => {
@@ -99,14 +89,7 @@ export default function Drivers() {
     try {
       const ref = await addDoc(collection(db, "drivers"), newDriver);
       setDrivers(prev => [...prev, { driverId: ref.id, ...newDriver }]);
-      setNewDriver({
-        firstName: "",
-        lastName: "",
-        phone: "",
-        wilaya: "",
-        region: "",
-        trucks: 1
-      });
+      setNewDriver({ firstName: "", lastName: "", phone: "", wilaya: "", region: "", trucks: 1 });
     } catch (err) {
       console.error(err);
       alert("Erreur lors de l'ajout du conducteur");
@@ -118,23 +101,11 @@ export default function Drivers() {
     if (!window.confirm("Supprimer ce conducteur et ses demandes ?")) return;
     try {
       await deleteDoc(doc(db, "drivers", driverId));
-
-      const q = query(
-        collection(db, "requests"),
-        where("driverId", "==", driverId)
-      );
-
+      const q = query(collection(db, "requests"), where("driverId", "==", driverId));
       const snap = await getDocs(q);
-      for (const t of snap.docs) {
-        await deleteDoc(doc(db, "requests", t.id));
-      }
-
+      for (const t of snap.docs) await deleteDoc(doc(db, "requests", t.id));
       setDrivers(prev => prev.filter(d => d.driverId !== driverId));
-
-      if (selectedDriver?.driverId === driverId) {
-        setSelectedDriver(null);
-      }
-
+      if (selectedDriver?.driverId === driverId) setSelectedDriver(null);
     } catch (err) {
       console.error(err);
       alert("Erreur lors de la suppression");
@@ -143,91 +114,95 @@ export default function Drivers() {
 
   // 🔹 fetch paid commissions
   const fetchPaidCommissions = async (driverId) => {
-    const q = query(
-      collection(db, "driverPayments"),
-      where("driverId", "==", driverId)
-    );
-
+    const q = query(collection(db, "driverPayments"), where("driverId", "==", driverId));
     const snap = await getDocs(q);
 
     let totalPaid = 0;
+    const paidMonthMap = {};
 
     snap.docs.forEach(d => {
       const p = d.data();
       if (p.regle) {
+        const key = `${p.year}-${String(p.month).padStart(2, "0")}`;
+        paidMonthMap[key] = (paidMonthMap[key] || 0) + (p.amount || 0);
         totalPaid += p.amount || 0;
       }
     });
 
+    setPaidByMonth(paidMonthMap);
     setPaidTotal(totalPaid);
   };
 
-  // 🔹 fetch trips
+  // 🔹 fetch driver trips (مرة واحدة)
   const fetchDriverTrips = async (driver) => {
     setSelectedDriver(driver);
 
-    const q = query(
-      collection(db, "requests"),
-      where("driverId", "==", driver.driverId)
-    );
-
+    const q = query(collection(db, "requests"), where("driverId", "==", driver.driverId));
     const snap = await getDocs(q);
 
-    const tripsData = snap.docs
-      .map(d => {
-        const t = d.data();
+    const tripsData = snap.docs.map(d => {
+      const t = d.data();
+      const date = parseDate(t);
+      const price = Number(t.prix) || 0;
+      const commission = price * COMMISSION_RATE;
+      const km = Number(t.kilometrage) || 0;
+      return { id: d.id, ...t, date, price, km, commission, status: t.status || t.dispatch || "En attente" };
+    }).filter(t => t.status === "Confirmé");
 
-        const date = parseDate(t);
+    setAllTrips(tripsData);
+    filterTripsByMonth(tripsData, monthFilter);
 
-        const price = Number(t.prix) || 0;
-        const commission = price * COMMISSION_RATE;
-        const km = Number(t.kilometrage) || 0;
+    await fetchPaidCommissions(driver.driverId);
+  };
 
-        return {
-          id: d.id,
-          ...t,
-          price,
-          km,
-          commission,
-          date,
-          status: t.status || t.dispatch || "En attente"
-        };
-      })
-      .filter(t => t.status === "Confirmé");
+  // 🔹 فلترة الرحلات حسب الشهر
+  const filterTripsByMonth = (trips, month) => {
+    let filtered = trips;
+    if (month) filtered = trips.filter(t => getMonthKey(t.date) === month);
 
-    let filteredTrips = tripsData;
-
-    if (monthFilter) {
-      filteredTrips = tripsData.filter(t => getMonthKey(t.date) === monthFilter);
-    }
-
-    const stats = filteredTrips.reduce(
+    const stats = filtered.reduce(
       (acc, t) => {
         if (!t.date) return acc;
-
         acc.totalTrips += 1;
         acc.totalCommission += t.commission;
-
-        const month = getMonthKey(t.date);
-        if (!acc.monthlyCommission[month]) acc.monthlyCommission[month] = 0;
-        acc.monthlyCommission[month] += t.commission;
-
+        const m = getMonthKey(t.date);
+        acc.monthlyCommission[m] = (acc.monthlyCommission[m] || 0) + t.commission;
         return acc;
       },
       { totalTrips: 0, totalCommission: 0, monthlyCommission: {} }
     );
 
-    setDriverTrips(filteredTrips);
+    setDriverTrips(filtered);
     setDriverStats(stats);
-
-    await fetchPaidCommissions(driver.driverId);
   };
+
+  // 🔹 pay commission for a month
+  const payMonthCommission = async (month, amount) => {
+    const [yearStr, monthStr] = month.split("-");
+    if (!window.confirm(`Régler ${amount} DA pour ${month} ?`)) return;
+
+    await addDoc(collection(db, "driverPayments"), {
+      driverId: selectedDriver.driverId,
+      month: monthStr,
+      year: Number(yearStr),
+      amount,
+      regle: true,
+      paidAt: serverTimestamp()
+    });
+
+    fetchDriverTrips(selectedDriver); // إعادة تحميل الرحلات والمدفوعات
+  };
+
+  // 🔹 effect: إعادة تصفية الرحلات عند تغيير الشهر
+  useEffect(() => {
+    if (selectedDriver) filterTripsByMonth(allTrips, monthFilter);
+  }, [monthFilter]);
 
   return (
     <div className="container mt-3">
       <h2>Liste des conducteurs</h2>
 
-      {/* Ajouter */}
+      {/* Ajouter conducteur */}
       <div className="mb-4 row g-2">
         {["firstName", "lastName", "phone", "wilaya", "region"].map((f, i) => (
           <div key={i} className="col-md-2">
@@ -235,72 +210,38 @@ export default function Drivers() {
               className="form-control"
               placeholder={f}
               value={newDriver[f]}
-              onChange={e =>
-                setNewDriver({ ...newDriver, [f]: e.target.value })
-              }
+              onChange={e => setNewDriver({ ...newDriver, [f]: e.target.value })}
             />
           </div>
         ))}
-
         <div className="col-md-1">
           <input
             type="number"
             className="form-control"
             value={newDriver.trucks}
-            onChange={e =>
-              setNewDriver({
-                ...newDriver,
-                trucks: Number(e.target.value) || 1
-              })
-            }
+            onChange={e => setNewDriver({ ...newDriver, trucks: Number(e.target.value) || 1 })}
           />
         </div>
-
         <div className="col-md-1">
-          <button className="btn btn-success w-100" onClick={handleAddDriver}>
-            Ajouter
-          </button>
+          <button className="btn btn-success w-100" onClick={handleAddDriver}>Ajouter</button>
         </div>
       </div>
 
-      {/* Liste */}
+      {/* Liste conducteurs */}
       <div className="row">
         {drivers.map(d => {
-          const driverTripsCount = driverTrips.filter(
-            t => t.driverId === d.driverId
-          ).length;
-
+          const driverTripsCount = allTrips.filter(t => t.driverId === d.driverId).length;
           return (
             <div key={d.driverId} className="col-md-4 mb-3">
               <div className="card">
                 <div className="card-body">
-                  <h5>
-                    {formatField(d.firstName)} {formatField(d.lastName)}
-                  </h5>
+                  <h5>{formatField(d.firstName)} {formatField(d.lastName)}</h5>
                   <p>Téléphone: {formatField(d.phone)}</p>
-                  <p>
-                    Wilaya: {formatField(d.wilaya)} | Région:{" "}
-                    {formatField(d.region)}
-                  </p>
-                  <p>
-                    Camions: {formatField(d.trucks)} | Trajets:{" "}
-                    {driverTripsCount}
-                  </p>
-
+                  <p>Wilaya: {formatField(d.wilaya)} | Région: {formatField(d.region)}</p>
+                  <p>Camions: {formatField(d.trucks)} | Trajets: {driverTripsCount}</p>
                   <div className="d-flex gap-2">
-                    <button
-                      className="btn btn-info"
-                      onClick={() => fetchDriverTrips(d)}
-                    >
-                      Détails
-                    </button>
-
-                    <button
-                      className="btn btn-danger"
-                      onClick={() => handleDeleteDriver(d.driverId)}
-                    >
-                      Supprimer
-                    </button>
+                    <button className="btn btn-info" onClick={() => fetchDriverTrips(d)}>Détails</button>
+                    <button className="btn btn-danger" onClick={() => handleDeleteDriver(d.driverId)}>Supprimer</button>
                   </div>
                 </div>
               </div>
@@ -309,35 +250,21 @@ export default function Drivers() {
         })}
       </div>
 
-      {/* Détails */}
+      {/* Détails conducteur */}
       {selectedDriver && (
         <div className="mt-4">
-          <h3>
-            Détails de {formatField(selectedDriver.firstName)}{" "}
-            {formatField(selectedDriver.lastName)}
-          </h3>
+          <h3>Détails de {formatField(selectedDriver.firstName)} {formatField(selectedDriver.lastName)}</h3>
+          <button className="btn btn-secondary mb-2" onClick={() => setSelectedDriver(null)}>Retour</button>
 
-          <button
-            className="btn btn-secondary mb-2"
-            onClick={() => setSelectedDriver(null)}
-          >
-            Retour
-          </button>
-
-          {/* Filter */}
+          {/* Filtrer par mois */}
           <div className="mb-3 row">
             <div className="col-md-3">
               <label className="form-label">Filtrer par mois</label>
-              <input
-                type="month"
-                className="form-control"
-                value={monthFilter}
-                onChange={e => setMonthFilterLocal(e.target.value)}
-              />
+              <input type="month" className="form-control" value={monthFilter} onChange={e => setMonthFilter(e.target.value)} />
             </div>
           </div>
 
-          {/* Stats */}
+          {/* Stats globales */}
           <div className="row mb-3">
             <div className="col-md-4">
               <div className="card p-3 text-center">
@@ -345,14 +272,12 @@ export default function Drivers() {
                 <h4>{driverStats.totalCommission} DA</h4>
               </div>
             </div>
-
             <div className="col-md-4">
               <div className="card p-3 text-center bg-success text-white">
                 <h6>Commission Payée</h6>
                 <h4>{paidTotal} DA</h4>
               </div>
             </div>
-
             <div className="col-md-4">
               <div className="card p-3 text-center bg-danger text-white">
                 <h6>Commission Restante</h6>
@@ -361,7 +286,45 @@ export default function Drivers() {
             </div>
           </div>
 
-          {/* Tableau */}
+          {/* Commission mensuelle */}
+          <h5>📆 Commission Mensuelle</h5>
+          <table className="table table-bordered">
+            <thead>
+              <tr>
+                <th>Mois</th>
+                <th>Montant</th>
+                <th>État</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(driverStats.monthlyCommission).map(([month, val]) => {
+                const paidAmount = paidByMonth[month] || 0;
+                const isPaid = paidAmount >= val;
+
+                return (
+                  <tr key={month}>
+                    <td>{month}</td>
+                    <td><b>{val} DA</b></td>
+                    <td>
+                      {isPaid
+                        ? <span className="badge bg-success">RÉGLÉ</span>
+                        : <span className="badge bg-warning text-dark">À PAYER</span>}
+                    </td>
+                    <td>
+                      {!isPaid && (
+                        <button className="btn btn-success btn-sm" onClick={() => payMonthCommission(month, val)}>
+                          Régler
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+
+          {/* Tableau des trajets */}
           <table className="table table-bordered mt-2">
             <thead>
               <tr>
@@ -373,7 +336,6 @@ export default function Drivers() {
                 <th>Commission</th>
               </tr>
             </thead>
-
             <tbody>
               {driverTrips.map(t => (
                 <tr key={t.id}>
