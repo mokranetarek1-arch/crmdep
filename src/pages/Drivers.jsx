@@ -2,18 +2,16 @@ import { useState, useEffect } from "react";
 import {
   collection,
   getDocs,
-  addDoc,
   deleteDoc,
   doc,
   query,
-  where,
-  serverTimestamp
+  where
 } from "firebase/firestore";
 import { db } from "../firebase";
 
 const COMMISSION_RATE = 0.1;
 
-// ✅ Parse date FIX
+// ✅ Parse date
 const parseDate = (t) => {
   if (t?.date?.toDate) return t.date.toDate();
   if (t?.date instanceof Date) return t.date;
@@ -27,18 +25,8 @@ const parseDate = (t) => {
 
 // ✅ Format
 const formatField = (value) => {
-  if (value === null || value === undefined) return "-";
-
-  if (value instanceof Date) {
-    return value.toLocaleDateString("fr-FR");
-  }
-
-  if (value?.toDate) return value.toDate().toLocaleDateString("fr-FR");
-
-  if (Array.isArray(value)) return value.map(v => formatField(v)).join(", ");
-
-  if (typeof value === "object") return "-";
-
+  if (!value) return "-";
+  if (value instanceof Date) return value.toLocaleDateString("fr-FR");
   return String(value);
 };
 
@@ -60,19 +48,6 @@ export default function Drivers() {
     monthlyCommission: {}
   });
 
-  const [newDriver, setNewDriver] = useState({
-    firstName: "",
-    lastName: "",
-    phone: "",
-    wilaya: "",
-    region: "",
-    trucks: 1
-  });
-
-  const [paidByMonth, setPaidByMonth] = useState({});
-  const [paidTotal, setPaidTotal] = useState(0);
-  const [monthFilter, setMonthFilter] = useState("");
-
   // 🔹 fetch drivers
   const fetchDrivers = async () => {
     const snapshot = await getDocs(collection(db, "drivers"));
@@ -87,42 +62,11 @@ export default function Drivers() {
     fetchDrivers();
   }, []);
 
-  // 🔹 add driver
-  const handleAddDriver = async () => {
-    if (!newDriver.firstName.trim() || !newDriver.wilaya.trim()) {
-      alert("Le prénom et la wilaya sont obligatoires");
-      return;
-    }
-
-    const ref = await addDoc(collection(db, "drivers"), newDriver);
-
-    setDrivers(prev => [...prev, { driverId: ref.id, ...newDriver }]);
-
-    setNewDriver({
-      firstName: "",
-      lastName: "",
-      phone: "",
-      wilaya: "",
-      region: "",
-      trucks: 1
-    });
-  };
-
   // 🔹 delete driver
   const handleDeleteDriver = async (driverId) => {
-    if (!window.confirm("Supprimer ce conducteur et ses demandes ?")) return;
+    if (!window.confirm("Supprimer ce conducteur ?")) return;
 
     await deleteDoc(doc(db, "drivers", driverId));
-
-    const q = query(
-      collection(db, "requests"),
-      where("driverId", "==", driverId)
-    );
-
-    const snap = await getDocs(q);
-    for (const t of snap.docs) {
-      await deleteDoc(doc(db, "requests", t.id));
-    }
 
     setDrivers(prev => prev.filter(d => d.driverId !== driverId));
 
@@ -131,33 +75,7 @@ export default function Drivers() {
     }
   };
 
-  // 🔹 paid commissions
-  const fetchPaidCommissions = async (driverId) => {
-    const q = query(
-      collection(db, "driverPayments"),
-      where("driverId", "==", driverId)
-    );
-
-    const snap = await getDocs(q);
-
-    let totalPaid = 0;
-    const paidMonthMap = {};
-
-    snap.docs.forEach(d => {
-      const p = d.data();
-
-      if (p.regle) {
-        const key = `${p.year}-${String(p.month).padStart(2, "0")}`;
-        paidMonthMap[key] = (paidMonthMap[key] || 0) + (p.amount || 0);
-        totalPaid += p.amount || 0;
-      }
-    });
-
-    setPaidByMonth(paidMonthMap);
-    setPaidTotal(totalPaid);
-  };
-
-  // 🔥 fetch trips
+  // 🔹 fetch trips
   const fetchDriverTrips = async (driver) => {
     setSelectedDriver(driver);
 
@@ -173,7 +91,6 @@ export default function Drivers() {
         const t = d.data();
 
         const date = parseDate(t);
-
         const price = Number(t.prix) || 0;
         const commission = price * COMMISSION_RATE;
 
@@ -188,15 +105,7 @@ export default function Drivers() {
       })
       .filter(t => t.status === "Confirmé");
 
-    let filtered = tripsData;
-
-    if (monthFilter) {
-      filtered = tripsData.filter(
-        t => getMonthKey(t.date) === monthFilter
-      );
-    }
-
-    const stats = filtered.reduce(
+    const stats = tripsData.reduce(
       (acc, t) => {
         if (!t.date) return acc;
 
@@ -212,33 +121,15 @@ export default function Drivers() {
       { totalTrips: 0, totalCommission: 0, monthlyCommission: {} }
     );
 
-    setDriverTrips(filtered);
+    setDriverTrips(tripsData);
     setDriverStats(stats);
-
-    await fetchPaidCommissions(driver.driverId);
-  };
-
-  // ✅ NOW USED → no ESLint error
-  const payMonthCommission = async (month, amount) => {
-    const [yearStr, monthStr] = month.split("-");
-
-    await addDoc(collection(db, "driverPayments"), {
-      driverId: selectedDriver.driverId,
-      month: Number(monthStr),
-      year: Number(yearStr),
-      amount,
-      regle: true,
-      paidAt: serverTimestamp()
-    });
-
-    fetchDriverTrips(selectedDriver);
   };
 
   return (
     <div className="container mt-3">
       <h2>Liste des conducteurs</h2>
 
-      {/* Liste */}
+      {/* LISTE */}
       <div className="row">
         {drivers.map(d => (
           <div key={d.driverId} className="col-md-4 mb-3">
@@ -247,11 +138,17 @@ export default function Drivers() {
                 <h5>{formatField(d.firstName)} {formatField(d.lastName)}</h5>
 
                 <div className="d-flex gap-2">
-                  <button className="btn btn-info" onClick={() => fetchDriverTrips(d)}>
+                  <button
+                    className="btn btn-info"
+                    onClick={() => fetchDriverTrips(d)}
+                  >
                     Détails
                   </button>
 
-                  <button className="btn btn-danger" onClick={() => handleDeleteDriver(d.driverId)}>
+                  <button
+                    className="btn btn-danger"
+                    onClick={() => handleDeleteDriver(d.driverId)}
+                  >
                     Supprimer
                   </button>
                 </div>
@@ -271,41 +168,16 @@ export default function Drivers() {
               <tr>
                 <th>Mois</th>
                 <th>Montant</th>
-                <th>Status</th>
-                <th>Action</th>
               </tr>
             </thead>
 
             <tbody>
-              {Object.entries(driverStats.monthlyCommission).map(([m, val]) => {
-                const paid = paidByMonth[m] || 0;
-
-                return (
-                  <tr key={m}>
-                    <td>{m}</td>
-                    <td>{val} DA</td>
-
-                    <td>
-                      {paid >= val ? (
-                        <span className="badge bg-success">Payé</span>
-                      ) : (
-                        <span className="badge bg-warning">À payer</span>
-                      )}
-                    </td>
-
-                    <td>
-                      {paid < val && (
-                        <button
-                          className="btn btn-success btn-sm"
-                          onClick={() => payMonthCommission(m, val)}
-                        >
-                          Régler
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
+              {Object.entries(driverStats.monthlyCommission).map(([m, val]) => (
+                <tr key={m}>
+                  <td>{m}</td>
+                  <td>{val} DA</td>
+                </tr>
+              ))}
             </tbody>
           </table>
 
