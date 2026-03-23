@@ -7,6 +7,7 @@ import {
   doc,
   query,
   where,
+  serverTimestamp
 } from "firebase/firestore";
 import { db } from "../firebase";
 
@@ -49,6 +50,11 @@ export default function Drivers() {
     monthlyCommission: {}
   });
 
+  // 🔹 حل مشكلة ESLint: تعريف المتغيرات
+  const [paidByMonth, setPaidByMonth] = useState({});
+  const [paidTotal, setPaidTotal] = useState(0);
+  const [monthFilter, setMonthFilter] = useState("");
+
   const [newDriver, setNewDriver] = useState({
     firstName: "",
     lastName: "",
@@ -57,10 +63,6 @@ export default function Drivers() {
     region: "",
     trucks: 1
   });
-
-  //const [paidByMonth, setPaidByMonth] = useState({});
-  const [paidTotal, setPaidTotal] = useState(0);
-  //const [monthFilter, setMonthFilter] = useState("");
 
   // 🔹 fetch drivers
   const fetchDrivers = async () => {
@@ -116,7 +118,7 @@ export default function Drivers() {
     }
   };
 
-  // 🔹 paid commissions
+  // 🔹 fetch paid commissions
   const fetchPaidCommissions = async (driverId) => {
     const q = query(collection(db, "driverPayments"), where("driverId", "==", driverId));
     const snap = await getDocs(q);
