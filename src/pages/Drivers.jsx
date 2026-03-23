@@ -7,12 +7,12 @@ import {
   doc,
   query,
   where
-} from "firebase/firestore"; // ✅ serverTimestamp removed
+} from "firebase/firestore"; // serverTimestamp removed
 import { db } from "../firebase";
 
 const COMMISSION_RATE = 0.1;
 
-// 🔹 Parse date
+// Parse date
 const parseDate = (t) => {
   if (t?.date?.toDate) return t.date.toDate();
   if (t?.date instanceof Date) return t.date;
@@ -24,19 +24,17 @@ const parseDate = (t) => {
   return null;
 };
 
-// 🔹 Format
+// Format field
 const formatField = (value) => {
   if (!value) return "-";
   if (value instanceof Date) return value.toLocaleDateString("fr-FR");
   return String(value);
 };
 
-// 🔹 Month key
+// Month key
 const getMonthKey = (date) => {
   if (!date) return null;
-  return `${date.getFullYear()}-${(date.getMonth() + 1)
-    .toString()
-    .padStart(2, "0")}`;
+  return `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, "0")}`;
 };
 
 export default function Drivers() {
@@ -50,8 +48,7 @@ export default function Drivers() {
   });
 
   const [paidTotal, setPaidTotal] = useState(0);
-  const [monthFilterValue, _] = useState(""); // ✅ setMonthFilter replaced with ignored variable
-  // ✅ paidByMonth removed to fix ESLint
+  const [monthFilterValue] = useState(''); // ✅ now no unused setter or ignored variable
 
   const [newDriver, setNewDriver] = useState({
     firstName: "",
