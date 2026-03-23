@@ -7,7 +7,6 @@ import {
   doc,
   query,
   where,
-  serverTimestamp
 } from "firebase/firestore";
 import { db } from "../firebase";
 
@@ -59,9 +58,9 @@ export default function Drivers() {
     trucks: 1
   });
 
-  const [paidByMonth, setPaidByMonth] = useState({});
+  //const [paidByMonth, setPaidByMonth] = useState({});
   const [paidTotal, setPaidTotal] = useState(0);
-  const [monthFilter, setMonthFilter] = useState("");
+  //const [monthFilter, setMonthFilter] = useState("");
 
   // 🔹 fetch drivers
   const fetchDrivers = async () => {
