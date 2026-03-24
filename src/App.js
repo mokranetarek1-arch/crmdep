@@ -66,7 +66,7 @@ function App() {
           onClick={() => setPage("assurance")}
           className={`btn ${page === "assurance" ? "btn-dark" : "btn-outline-dark"}`} // ✅ زر صفحة Assurance
         >
-          Assurance
+          B2B
         </button>
       </div>
 
