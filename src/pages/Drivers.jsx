@@ -46,7 +46,7 @@ export default function Drivers() {
   const [drivers, setDrivers] = useState([]);
   const [selectedDriver, setSelectedDriver] = useState(null);
   const [driverTrips, setDriverTrips] = useState([]);
-  const [allTrips, setAllTrips] = useState([]); // جلب جميع الرحلات مرة واحدة
+  const [allTrips, setAllTrips] = useState([]);
   const [driverStats, setDriverStats] = useState({
     totalTrips: 0,
     totalCommission: 0,
@@ -190,7 +190,29 @@ export default function Drivers() {
       paidAt: serverTimestamp()
     });
 
-    fetchDriverTrips(selectedDriver); // إعادة تحميل الرحلات والمدفوعات
+    fetchDriverTrips(selectedDriver);
+  };
+
+  // 🔹 undo / cancel payment
+  const undoMonthPayment = async (month) => {
+    if (!selectedDriver) return;
+    if (!window.confirm(`Annuler le paiement pour ${month} ?`)) return;
+
+    const [yearStr, monthStr] = month.split("-");
+    const q = query(
+      collection(db, "driverPayments"),
+      where("driverId", "==", selectedDriver.driverId),
+      where("year", "==", Number(yearStr)),
+      where("month", "==", monthStr),
+      where("regle", "==", true)
+    );
+
+    const snap = await getDocs(q);
+    for (const docSnap of snap.docs) {
+      await deleteDoc(doc(db, "driverPayments", docSnap.id));
+    }
+
+    fetchDriverTrips(selectedDriver);
   };
 
   // 🔹 effect: إعادة تصفية الرحلات عند تغيير الشهر
@@ -311,10 +333,15 @@ export default function Drivers() {
                         ? <span className="badge bg-success">RÉGLÉ</span>
                         : <span className="badge bg-warning text-dark">À PAYER</span>}
                     </td>
-                    <td>
+                    <td className="d-flex gap-1">
                       {!isPaid && (
                         <button className="btn btn-success btn-sm" onClick={() => payMonthCommission(month, val)}>
                           Régler
+                        </button>
+                      )}
+                      {isPaid && (
+                        <button className="btn btn-danger btn-sm" onClick={() => undoMonthPayment(month)}>
+                          Annuler
                         </button>
                       )}
                     </td>
