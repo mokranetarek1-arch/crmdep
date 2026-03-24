@@ -11,8 +11,35 @@ export default function RequestTable({ onEdit }) {
   const [statusFilter, setStatusFilter] = useState("");
   const [motifFilter, setMotifFilter] = useState("");
 
-  // 🔥 NEW: note popup
   const [selectedNote, setSelectedNote] = useState("");
+
+  // 🔥 WhatsApp function updated
+  const sendWhatsApp = (phone, name, depart, destination, amount) => {
+    if (!phone) return alert("Numéro manquant");
+
+    const formattedPhone = phone.startsWith("0")
+      ? "+213" + phone.substring(1)
+      : phone.startsWith("+213")
+      ? phone
+      : "+213" + phone;
+
+    const message = `Depalink Service dépannage avec vous 🚗
+
+Départ: ${depart || "-"}
+Destination: ${destination || "-"}
+Montant: ${amount || 0} DA
+
+Si vous êtes satisfait par notre service, nous vous invitons à partager votre expérience sur nos réseaux sociaux :
+Facebook : https://www.facebook.com/share/1DKaHHQwSk/
+
+Aussi, nous évaluer sur Google :
+https://www.google.com/search?q=depalink+service+d%C3%A9pannage
+
+Merci pour votre confiance 🙏`;
+
+    const url = `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`;
+    window.open(url, "_blank");
+  };
 
   // 🔥 Realtime listener
   useEffect(() => {
@@ -190,6 +217,7 @@ export default function RequestTable({ onEdit }) {
                     <td>{r.typeClient || "-"}</td>
                     <td>{r.marqueVehicule || "-"}</td>
                     <td>{r.quantite}</td>
+
                     <td>
                       <span className={`badge ${
                         r.status === "Annulé"
@@ -201,6 +229,7 @@ export default function RequestTable({ onEdit }) {
                         {r.status}
                       </span>
                     </td>
+
                     <td>{r.dispatch || "-"}</td>
                     <td>{r.driverName || "-"}</td>
                     <td>{r.prix ? `${r.prix} DA` : "-"}</td>
@@ -208,7 +237,7 @@ export default function RequestTable({ onEdit }) {
                     <td>{dateObj ? dateObj.toLocaleDateString() : "-"}</td>
                     <td>{r.heure || "-"}</td>
 
-                    {/* ✅ NOTE FIX */}
+                    {/* NOTE */}
                     <td style={{ maxWidth: "150px", cursor: "pointer" }}>
                       {r.note ? (
                         <span
@@ -226,10 +255,26 @@ export default function RequestTable({ onEdit }) {
                       ) : "-"}
                     </td>
 
+                    {/* ACTIONS */}
                     <td>
-                      <button className="btn btn-sm btn-primary me-2" onClick={() => onEdit(r)}>Modifier</button>
-                      <button className="btn btn-sm btn-danger" onClick={() => handleDelete(r.docId)}>Supprimer</button>
+                      <button className="btn btn-sm btn-primary me-2" onClick={() => onEdit(r)}>
+                        Modifier
+                      </button>
+
+                      <button className="btn btn-sm btn-danger me-2" onClick={() => handleDelete(r.docId)}>
+                        Supprimer
+                      </button>
+
+                      {r.status === "Confirmé" && (
+                        <button
+                          className="btn btn-sm btn-success"
+                          onClick={() => sendWhatsApp(r.phone, r.id, r.depart, r.destination, r.prix)}
+                        >
+                          WhatsApp 📲
+                        </button>
+                      )}
                     </td>
+
                   </tr>
                 )
               })
@@ -238,7 +283,7 @@ export default function RequestTable({ onEdit }) {
         </table>
       </div>
 
-      {/* ✅ MODAL */}
+      {/* MODAL */}
       {selectedNote && (
         <div
           className="modal fade show"
