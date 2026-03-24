@@ -6,74 +6,62 @@ export default function RequestTable({ onEdit }) {
   const [rows, setRows] = useState([]);
   const [dateFilter, setDateFilter] = useState("");
   const [dayFilter, setDayFilter] = useState("");
-  const [monthFilter, setMonthFilter] = useState(false);
+  const [monthFilter, setMonthFilter] = useState("");
+  const [yearFilter, setYearFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [motifFilter, setMotifFilter] = useState("");
 
-  // 🔥 REALTIME LISTENER
+  // 🔥 Realtime listener
   useEffect(() => {
     const unsubscribe = onSnapshot(
       collection(db, "requests"),
-      (snapshot) => {
+      snapshot => {
         const data = snapshot.docs.map(d => ({
-          docId: d.id,     // ✅ ID الحقيقي
+          docId: d.id,
           ...d.data()
         }));
         setRows(data);
       },
-      (error) => {
-        console.error("🔥 Firestore error:", error);
-      }
+      error => console.error("Firestore error:", error)
     );
 
     return () => unsubscribe();
   }, []);
 
-  // ✅ فلترة
+  // 🔹 Filter logic
   const filteredRows = rows.filter(r => {
-    const dateObj = r.date?.toDate
-      ? r.date.toDate()
-      : (r.date ? new Date(r.date) : null);
+    const dateObj = r.date?.toDate ? r.date.toDate() : (r.date ? new Date(r.date) : null);
+    const dateStr = dateObj ? dateObj.toISOString().slice(0, 10) : "";
 
-    const dateStr = dateObj
-      ? dateObj.toISOString().slice(0, 10)
-      : "";
-
-    const matchDate = dateFilter
-      ? dateStr === dateFilter
-      : true;
+    const matchDate = dateFilter ? dateStr === dateFilter : true;
 
     let matchDay = true;
     if (dayFilter && dateObj) {
-      const dayName = dateObj.toLocaleDateString("en-US", {
-        weekday: "long"
-      });
+      const dayName = dateObj.toLocaleDateString("en-US", { weekday: "long" });
       matchDay = dayName === dayFilter;
     }
 
-    const matchMonth = monthFilter
-      ? dateObj &&
-        dateObj.getMonth() === new Date().getMonth() &&
-        dateObj.getFullYear() === new Date().getFullYear()
-      : true;
+    let matchMonthYear = true;
+    if (monthFilter !== "" && yearFilter !== "" && dateObj) {
+      matchMonthYear =
+        dateObj.getMonth() === parseInt(monthFilter) &&
+        dateObj.getFullYear() === parseInt(yearFilter);
+    }
 
-    return matchDate && matchDay && matchMonth;
+    const matchStatus = statusFilter ? r.status === statusFilter : true;
+    const matchMotif = motifFilter ? r.motif === motifFilter : true;
+
+    return matchDate && matchDay && matchMonthYear && matchStatus && matchMotif;
   });
 
-  // 🔥 DELETE
+  // 🔹 Delete
   const handleDelete = async (docId) => {
     if (!window.confirm("Voulez-vous vraiment supprimer ce trajet ?")) return;
-
     try {
-      console.log("Deleting:", docId);
-
       await deleteDoc(doc(db, "requests", docId));
-
-      console.log("✅ Deleted");
-
-      // تحديث مباشر
       setRows(prev => prev.filter(r => r.docId !== docId));
-
     } catch (err) {
-      console.error("❌ Delete error:", err);
+      console.error("Delete error:", err);
       alert("Erreur lors de la suppression");
     }
   };
@@ -81,25 +69,17 @@ export default function RequestTable({ onEdit }) {
   return (
     <div className="container-fluid mt-4">
 
-      {/* FILTERS */}
+      {/* ===================== FILTERS ===================== */}
       <div className="row mb-4 g-3 align-items-end">
-        <div className="col-md-3">
+
+        <div className="col-md-2">
           <label>Date :</label>
-          <input
-            type="date"
-            className="form-control"
-            value={dateFilter}
-            onChange={e => setDateFilter(e.target.value)}
-          />
+          <input type="date" className="form-control" value={dateFilter} onChange={e => setDateFilter(e.target.value)} />
         </div>
 
-        <div className="col-md-3">
+        <div className="col-md-2">
           <label>Jour :</label>
-          <select
-            className="form-select"
-            value={dayFilter}
-            onChange={e => setDayFilter(e.target.value)}
-          >
+          <select className="form-select" value={dayFilter} onChange={e => setDayFilter(e.target.value)}>
             <option value="">Tous</option>
             <option value="Monday">Lundi</option>
             <option value="Tuesday">Mardi</option>
@@ -111,23 +91,53 @@ export default function RequestTable({ onEdit }) {
           </select>
         </div>
 
-        <div className="col-md-3">
-          <label>Mois actuel :</label>
-          <div className="form-check mt-2">
-            <input
-              className="form-check-input"
-              type="checkbox"
-              checked={monthFilter}
-              onChange={() => setMonthFilter(!monthFilter)}
-            />
-            <label className="form-check-label">
-              Mois courant
-            </label>
-          </div>
+        <div className="col-md-2">
+          <label>Mois :</label>
+          <select className="form-select" value={monthFilter} onChange={e => setMonthFilter(e.target.value)}>
+            <option value="">Tous</option>
+            <option value="0">Janvier</option>
+            <option value="1">Février</option>
+            <option value="2">Mars</option>
+            <option value="3">Avril</option>
+            <option value="4">Mai</option>
+            <option value="5">Juin</option>
+            <option value="6">Juillet</option>
+            <option value="7">Août</option>
+            <option value="8">Septembre</option>
+            <option value="9">Octobre</option>
+            <option value="10">Novembre</option>
+            <option value="11">Décembre</option>
+          </select>
         </div>
+
+        <div className="col-md-2">
+          <label>Année :</label>
+          <input type="number" className="form-control" value={yearFilter} onChange={e => setYearFilter(e.target.value)} placeholder={new Date().getFullYear()} />
+        </div>
+
+        <div className="col-md-2">
+          <label>Status :</label>
+          <select className="form-select" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+            <option value="">Tous</option>
+            <option value="Annulé">Annulé</option>
+            <option value="Confirmé">Confirmé</option>
+            <option value="En cours">En cours</option>
+          </select>
+        </div>
+
+        <div className="col-md-2">
+          <label>Motif :</label>
+          <select className="form-select" value={motifFilter} onChange={e => setMotifFilter(e.target.value)}>
+            <option value="">Tous</option>
+            <option value="course immediate">Course immédiate</option>
+            <option value="reservation">Réservation</option>
+            <option value="demande d'information">Demande d'information</option>
+          </select>
+        </div>
+
       </div>
 
-      {/* TABLE */}
+      {/* ===================== TABLE ===================== */}
       <div className="table-responsive">
         <table className="table table-hover align-middle">
           <thead className="table-light">
@@ -135,11 +145,12 @@ export default function RequestTable({ onEdit }) {
               <th>Source</th>
               <th>ID</th>
               <th>Motif</th>
+              <th>Téléphone</th>
               <th>Départ</th>
               <th>Destination</th>
               <th>Km</th>
               <th>Wilaya</th>
-              <th>Type</th>
+              <th>Type Client</th>
               <th>Véhicule</th>
               <th>Qté</th>
               <th>Status</th>
@@ -153,33 +164,29 @@ export default function RequestTable({ onEdit }) {
               <th>Actions</th>
             </tr>
           </thead>
-
           <tbody>
             {filteredRows.length === 0 ? (
               <tr>
-                <td colSpan="19" className="text-center text-muted py-3">
+                <td colSpan="20" className="text-center text-muted py-3">
                   Aucun trajet trouvé
                 </td>
               </tr>
             ) : (
               filteredRows.map(r => {
-                const dateObj = r.date?.toDate
-                  ? r.date.toDate()
-                  : (r.date ? new Date(r.date) : null);
-
+                const dateObj = r.date?.toDate ? r.date.toDate() : (r.date ? new Date(r.date) : null);
                 return (
                   <tr key={r.docId}>
                     <td>{r.source}</td>
-                    <td>{r.id}</td> {/* هذا id تاع client */}
+                    <td>{r.id}</td>
                     <td>{r.motif}</td>
-                    <td>{r.depart}</td>
-                    <td>{r.destination}</td>
+                    <td>{r.phone || "-"}</td>
+                    <td>{r.depart || "-"}</td>
+                    <td>{r.destination || "-"}</td>
                     <td>{r.kilometrage || "-"}</td>
                     <td>{r.wilaya}</td>
-                    <td>{r.typeClient}</td>
+                    <td>{r.typeClient || "-"}</td>
                     <td>{r.marqueVehicule || "-"}</td>
                     <td>{r.quantite}</td>
-
                     <td>
                       <span className={`badge ${
                         r.status === "Annulé"
@@ -191,42 +198,22 @@ export default function RequestTable({ onEdit }) {
                         {r.status}
                       </span>
                     </td>
-
-                    <td>{r.dispatch}</td>
+                    <td>{r.dispatch || "-"}</td>
                     <td>{r.driverName || "-"}</td>
                     <td>{r.prix ? `${r.prix} DA` : "-"}</td>
-                    <td>{r.panneType}</td>
-
-                    <td>
-                      {dateObj
-                        ? dateObj.toLocaleDateString()
-                        : "-"}
-                    </td>
-
+                    <td>{r.panneType || "-"}</td>
+                    <td>{dateObj ? dateObj.toLocaleDateString() : "-"}</td>
                     <td>{r.heure || "-"}</td>
                     <td>{r.note || "-"}</td>
-
                     <td>
-                      <button
-                        className="btn btn-sm btn-primary me-2"
-                        onClick={() => onEdit(r)}
-                      >
-                        Modifier
-                      </button>
-
-                      <button
-                        className="btn btn-sm btn-danger"
-                        onClick={() => handleDelete(r.docId)}
-                      >
-                        Supprimer
-                      </button>
+                      <button className="btn btn-sm btn-primary me-2" onClick={() => onEdit(r)}>Modifier</button>
+                      <button className="btn btn-sm btn-danger" onClick={() => handleDelete(r.docId)}>Supprimer</button>
                     </td>
                   </tr>
-                );
+                )
               })
             )}
           </tbody>
-
         </table>
       </div>
     </div>
