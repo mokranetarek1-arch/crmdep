@@ -1,12 +1,13 @@
-import { useState } from "react";
-import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { useState, useEffect } from "react";
+import { addDoc, collection, serverTimestamp, doc, updateDoc } from "firebase/firestore";
 import { db } from "../firebase";
 
-export default function RequestForm({ drivers = [] }) {
-  const [form, setForm] = useState({
+export default function RequestForm({ drivers = [], editData = null, onSave }) {
+  const defaultForm = {
     source: "Appel",
     id: "client",
     motif: "course immediate",
+    phone: "",
     depart: "",
     destination: "",
     kilometrage: "",
@@ -14,69 +15,85 @@ export default function RequestForm({ drivers = [] }) {
     typeClient: "Client",
     marqueVehicule: "",
     quantite: 1,
-    status: "Annulé",
-    dispatch: "Appelé",
-    chauffeur: "",      // هنا نخزن driverId
-    driverName: "",     // هنا نخزن اسم السائق للعرض
+    status: "Confirmé",
+    chauffeur: "",
+    driverName: "",
     prix: "",
     panneType: "Panne",
     date: "",
     heure: "",
     note: ""
-  });
+  };
+
+  const [form, setForm] = useState(defaultForm);
+  const [isInfoMotif, setIsInfoMotif] = useState(false);
+
+  // ملء الفورم عند التعديل
+  useEffect(() => {
+    if (editData) {
+      setForm({
+        ...editData,
+        chauffeur: editData.driverId || "",
+        driverName: editData.driverName || "",
+        phone: editData.phone || ""
+      });
+      setIsInfoMotif(editData.motif === "demande d'information");
+    }
+  }, [editData]);
+
+  // مراقبة تغيّر Motif
+  useEffect(() => {
+    setIsInfoMotif(form.motif === "demande d'information");
+  }, [form.motif]);
 
   const submit = async (e) => {
     e.preventDefault();
 
-    if (!form.chauffeur) {
+    // إذا كان Motif != demande d'information، نجعل اختيار السائق إلزامياً
+    if (!isInfoMotif && form.status === "Confirmé" && !form.chauffeur) {
       alert("Veuillez sélectionner un chauffeur !");
       return;
     }
 
     try {
-      // 🔹 حفظ الطلب مع driverId و driverName
-      await addDoc(collection(db, "requests"), {
-        ...form,
-        driverId: form.chauffeur,
-        driverName: form.driverName,
-        timestamp: serverTimestamp()
-      });
+      if (editData && editData.docId) {
+        const docRef = doc(db, "requests", editData.docId);
+        await updateDoc(docRef, {
+          ...form,
+          driverId: form.chauffeur,
+          driverName: form.driverName,
+          timestamp: serverTimestamp()
+        });
+        alert("Demande mise à jour avec succès !");
+      } else {
+        await addDoc(collection(db, "requests"), {
+          ...form,
+          driverId: form.chauffeur,
+          driverName: form.driverName,
+          timestamp: serverTimestamp()
+        });
+        alert("Demande enregistrée avec succès !");
+      }
 
-      alert("Demande enregistrée avec succès !");
-
-      // إعادة تهيئة النموذج
-      setForm({
-        source: "Appel",
-        id: "client",
-        motif: "course immediate",
-        depart: "",
-        destination: "",
-        kilometrage: "",
-        wilaya: "Alger",
-        typeClient: "Client",
-        marqueVehicule: "",
-        quantite: 1,
-        status: "Annulé",
-        dispatch: "Appelé",
-        chauffeur: "",
-        driverName: "",
-        prix: "",
-        panneType: "Panne",
-        date: "",
-        heure: "",
-        note: ""
-      });
-
+      setForm(defaultForm);
+      onSave && onSave();
     } catch (error) {
-      console.error("Erreur lors de l'ajout:", error);
-      alert("Erreur lors de l'enregistrement, réessayez !");
+      console.error("Erreur:", error);
+      alert("Erreur, réessayez !");
     }
+  };
+
+  const cancelEdit = () => {
+    setForm(defaultForm);
+    onSave && onSave();
   };
 
   return (
     <div className="container mt-3">
       <div className="card shadow-sm">
-        <div className="card-header fw-bold">Nouvelle demande</div>
+        <div className="card-header fw-bold">
+          {editData ? "Modifier demande" : "Nouvelle demande"}
+        </div>
         <div className="card-body">
           <form onSubmit={submit} className="row g-3">
 
@@ -119,32 +136,112 @@ export default function RequestForm({ drivers = [] }) {
               </select>
             </div>
 
-            {/* Départ */}
-            <div className="col-md-6">
-              <label className="form-label">Départ</label>
-              <input className="form-control"
-                value={form.depart}
-                onChange={e => setForm({ ...form, depart: e.target.value })}
-              />
-            </div>
-
-            {/* Destination */}
-            <div className="col-md-6">
-              <label className="form-label">Destination</label>
-              <input className="form-control"
-                value={form.destination}
-                onChange={e => setForm({ ...form, destination: e.target.value })}
-              />
-            </div>
-
-            {/* Kilométrage */}
+            {/* Phone */}
             <div className="col-md-4">
-              <label className="form-label">Kilométrage</label>
-              <input type="number" className="form-control"
-                value={form.kilometrage}
-                onChange={e => setForm({ ...form, kilometrage: e.target.value })}
+              <label className="form-label">Numéro de téléphone</label>
+              <input type="text" className="form-control"
+                value={form.phone}
+                onChange={e => setForm({ ...form, phone: e.target.value })}
+                placeholder="Ex: 0551120023"
               />
             </div>
+
+            {/* الحقول الخاصة بالرحلة + Marque véhicule */}
+            {!isInfoMotif && (
+              <>
+                <div className="col-md-6">
+                  <label className="form-label">Départ</label>
+                  <input className="form-control"
+                    value={form.depart}
+                    onChange={e => setForm({ ...form, depart: e.target.value })}
+                  />
+                </div>
+                <div className="col-md-6">
+                  <label className="form-label">Destination</label>
+                  <input className="form-control"
+                    value={form.destination}
+                    onChange={e => setForm({ ...form, destination: e.target.value })}
+                  />
+                </div>
+                <div className="col-md-2">
+                  <label className="form-label">Quantité</label>
+                  <input type="number" className="form-control"
+                    value={form.quantite}
+                    onChange={e => setForm({ ...form, quantite: e.target.value })}
+                  />
+                </div>
+                <div className="col-md-4">
+                  <label className="form-label">Status</label>
+                  <select className="form-select"
+                    value={form.status}
+                    onChange={e => setForm({ ...form, status: e.target.value })}
+                  >
+                    <option>En cours</option>
+                    <option>Confirmé</option>
+                    <option>Annulé</option>
+                  </select>
+                </div>
+                <div className="col-md-4">
+                  <label className="form-label">Kilométrage</label>
+                  <input type="number" className="form-control"
+                    value={form.kilometrage}
+                    onChange={e => setForm({ ...form, kilometrage: e.target.value })}
+                  />
+                </div>
+                <div className="col-md-4">
+                  <label className="form-label">Prix (DA)</label>
+                  <input type="number" className="form-control"
+                    value={form.prix}
+                    onChange={e => setForm({ ...form, prix: e.target.value })}
+                  />
+                </div>
+                <div className="col-md-4">
+                  <label className="form-label">Chauffeur</label>
+                  <select className="form-select"
+                    value={form.chauffeur}
+                    onChange={e => {
+                      const selected = drivers.find(d => d.driverId === e.target.value);
+                      setForm({
+                        ...form,
+                        chauffeur: selected?.driverId || "",
+                        driverName: selected ? `${selected.firstName} ${selected.lastName}` : ""
+                      });
+                    }}
+                  >
+                    <option value="">-- Choisir un chauffeur --</option>
+                    {drivers.map(d => (
+                      <option key={d.driverId} value={d.driverId}>
+                        {d.firstName} {d.lastName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="col-md-4">
+                  <label className="form-label">Type de panne</label>
+                  <select className="form-select"
+                    value={form.panneType}
+                    onChange={e => setForm({ ...form, panneType: e.target.value })}
+                  >
+                    <option>Panne generale</option>
+                    <option>Déplacement</option>
+                    <option>Crevation roue</option>
+                    <option>Boite de vitesse</option>
+                    <option>Accident</option>
+                    <option>Battrie</option>
+                    
+                  </select>
+                </div>
+
+                {/* Marque véhicule */}
+                <div className="col-md-4">
+                  <label className="form-label">Marque véhicule</label>
+                  <input className="form-control"
+                    value={form.marqueVehicule}
+                    onChange={e => setForm({ ...form, marqueVehicule: e.target.value })}
+                  />
+                </div>
+              </>
+            )}
 
             {/* Wilaya */}
             <div className="col-md-4">
@@ -167,95 +264,7 @@ export default function RequestForm({ drivers = [] }) {
               </select>
             </div>
 
-            {/* Marque véhicule */}
-            <div className="col-md-4">
-              <label className="form-label">Marque véhicule</label>
-              <input className="form-control"
-                value={form.marqueVehicule}
-                onChange={e => setForm({ ...form, marqueVehicule: e.target.value })}
-              />
-            </div>
-
-            {/* Quantité */}
-            <div className="col-md-2">
-              <label className="form-label">Quantité</label>
-              <input type="number" className="form-control"
-                value={form.quantite}
-                onChange={e => setForm({ ...form, quantite: e.target.value })}
-              />
-            </div>
-
-            {/* Status */}
-            <div className="col-md-4">
-              <label className="form-label">Status</label>
-              <select className="form-select"
-                value={form.status}
-                onChange={e => setForm({ ...form, status: e.target.value })}
-              >
-                <option>Annulé</option>
-                <option>En cours</option>
-                <option>Confirmé</option>
-              </select>
-            </div>
-
-            {/* Dispatch */}
-            <div className="col-md-4">
-              <label className="form-label">Dispatch</label>
-              <select className="form-select"
-                value={form.dispatch}
-                onChange={e => setForm({ ...form, dispatch: e.target.value })}
-              >
-                <option>Appelé</option>
-                <option>Application</option>
-                <option>Aucun</option>
-              </select>
-            </div>
-
-            {/* Chauffeur */}
-            <div className="col-md-4">
-              <label className="form-label">Chauffeur</label>
-              <select className="form-select"
-                value={form.chauffeur}
-                onChange={e => {
-                  const selected = drivers.find(d => d.driverId === e.target.value);
-                  setForm({
-                    ...form,
-                    chauffeur: selected?.driverId || "",
-                    driverName: selected ? `${selected.firstName} ${selected.lastName}` : ""
-                  });
-                }}
-              >
-                <option value="">-- Choisir un chauffeur --</option>
-                {drivers.map(d => (
-                  <option key={d.driverId} value={d.driverId}>
-                    {d.firstName} {d.lastName}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Prix */}
-            <div className="col-md-4">
-              <label className="form-label">Prix (DA)</label>
-              <input type="number" className="form-control"
-                value={form.prix}
-                onChange={e => setForm({ ...form, prix: e.target.value })}
-              />
-            </div>
-
-            {/* Type de panne */}
-            <div className="col-md-4">
-              <label className="form-label">Type de panne</label>
-              <select className="form-select"
-                value={form.panneType}
-                onChange={e => setForm({ ...form, panneType: e.target.value })}
-              >
-                <option>Panne</option>
-                <option>Déplacement</option>
-              </select>
-            </div>
-
-            {/* Date */}
+            {/* Date & Heure */}
             <div className="col-md-2">
               <label className="form-label">Date</label>
               <input type="date" className="form-control"
@@ -263,8 +272,6 @@ export default function RequestForm({ drivers = [] }) {
                 onChange={e => setForm({ ...form, date: e.target.value })}
               />
             </div>
-
-            {/* Heure */}
             <div className="col-md-2">
               <label className="form-label">Heure</label>
               <input type="time" className="form-control"
@@ -282,8 +289,19 @@ export default function RequestForm({ drivers = [] }) {
               />
             </div>
 
+            {/* أزرار الإرسال / إلغاء / جديدة */}
             <div className="col-12 text-end">
-              <button type="submit" className="btn btn-primary">Enregistrer</button>
+              <button type="submit" className="btn btn-primary me-2">
+                {editData ? "Mettre à jour" : "Enregistrer"}
+              </button>
+              {editData && (
+                <button type="button" className="btn btn-secondary me-2" onClick={cancelEdit}>
+                  Annuler
+                </button>
+              )}
+              <button type="button" className="btn btn-success" onClick={() => setForm(defaultForm)}>
+                Nouvelle demande
+              </button>
             </div>
 
           </form>
