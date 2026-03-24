@@ -11,6 +11,9 @@ export default function RequestTable({ onEdit }) {
   const [statusFilter, setStatusFilter] = useState("");
   const [motifFilter, setMotifFilter] = useState("");
 
+  // 🔥 NEW: note popup
+  const [selectedNote, setSelectedNote] = useState("");
+
   // 🔥 Realtime listener
   useEffect(() => {
     const unsubscribe = onSnapshot(
@@ -204,7 +207,25 @@ export default function RequestTable({ onEdit }) {
                     <td>{r.panneType || "-"}</td>
                     <td>{dateObj ? dateObj.toLocaleDateString() : "-"}</td>
                     <td>{r.heure || "-"}</td>
-                    <td>{r.note || "-"}</td>
+
+                    {/* ✅ NOTE FIX */}
+                    <td style={{ maxWidth: "150px", cursor: "pointer" }}>
+                      {r.note ? (
+                        <span
+                          onClick={() => setSelectedNote(r.note)}
+                          style={{
+                            display: "inline-block",
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            maxWidth: "150px"
+                          }}
+                        >
+                          {r.note}
+                        </span>
+                      ) : "-"}
+                    </td>
+
                     <td>
                       <button className="btn btn-sm btn-primary me-2" onClick={() => onEdit(r)}>Modifier</button>
                       <button className="btn btn-sm btn-danger" onClick={() => handleDelete(r.docId)}>Supprimer</button>
@@ -216,6 +237,28 @@ export default function RequestTable({ onEdit }) {
           </tbody>
         </table>
       </div>
+
+      {/* ✅ MODAL */}
+      {selectedNote && (
+        <div
+          className="modal fade show"
+          style={{ display: "block", backgroundColor: "rgba(0,0,0,0.5)" }}
+          onClick={() => setSelectedNote("")}
+        >
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content" onClick={e => e.stopPropagation()}>
+              <div className="modal-header">
+                <h5 className="modal-title">Note</h5>
+                <button className="btn-close" onClick={() => setSelectedNote("")}></button>
+              </div>
+              <div className="modal-body">
+                <p style={{ whiteSpace: "pre-wrap" }}>{selectedNote}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
