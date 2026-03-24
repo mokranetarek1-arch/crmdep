@@ -1,383 +1,429 @@
+// src/pages/Assurance.jsx
 import { useState, useEffect } from "react";
 import {
   collection,
   getDocs,
   addDoc,
+  updateDoc,
   deleteDoc,
   doc,
-  query,
-  where,
   serverTimestamp
 } from "firebase/firestore";
 import { db } from "../firebase";
 
 const COMMISSION_RATE = 0.1;
 
-// 🔥 FIX date parser
-const parseDate = (t) => {
-  if (t?.date?.toDate) return t.date.toDate();
-  if (t?.date instanceof Date) return t.date;
-  if (typeof t?.date === "string") {
-    const d = new Date(t.date);
-    if (!isNaN(d)) return d;
-  }
-  if (t?.timestamp?.toDate) return t.timestamp.toDate();
-  return null;
-};
-
-// 🔹 Formatter
-const formatField = (value) => {
-  if (value === null || value === undefined) return "-";
-  if (value instanceof Date) return value.toLocaleDateString("fr-FR");
-  if (value?.toDate) return value.toDate().toLocaleDateString("fr-FR");
-  if (Array.isArray(value)) return value.map(v => formatField(v)).join(", ");
-  if (typeof value === "object") return "-";
-  return String(value);
-};
-
-// 🔹 Month key
-const getMonthKey = (date) => {
-  if (!date) return null;
-  const d = date instanceof Date ? date : date.toDate ? date.toDate() : new Date(date);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-};
-
-export default function Drivers() {
+export default function Assurance() {
   const [drivers, setDrivers] = useState([]);
-  const [selectedDriver, setSelectedDriver] = useState(null);
-  const [driverTrips, setDriverTrips] = useState([]);
-  const [allTrips, setAllTrips] = useState([]);
-  const [driverStats, setDriverStats] = useState({
-    totalTrips: 0,
-    totalCommission: 0,
-    monthlyCommission: {}
+  const [trips, setTrips] = useState([]);
+  const [editTripId, setEditTripId] = useState(null);
+
+  const [form, setForm] = useState({
+    driverId: "",
+    depart: "",
+    destination: "",
+    date: "",
+    kilometrage: "",
+    prix: "",
+    typePayment: "assurance",
+    numeroDossier: "",
+    companyName: "",
+    driverSalary: "",
+    commission: ""
   });
 
-  const [newDriver, setNewDriver] = useState({
-    firstName: "",
-    lastName: "",
-    phone: "",
-    wilaya: "",
-    region: "",
-    trucks: 1
-  });
-
-  const [paidTotal, setPaidTotal] = useState(0);
-  const [paidByMonth, setPaidByMonth] = useState({});
+  const [selectedDriverFilter, setSelectedDriverFilter] = useState("");
   const [monthFilter, setMonthFilter] = useState("");
+  const [numeroDossierFilter, setNumeroDossierFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState(""); // assurance / societe
+  const [paidByMonth, setPaidByMonth] = useState({});
+  const [paidTotal, setPaidTotal] = useState(0);
 
-  // 🔹 fetch drivers
+  const getMonthKey = (date) => {
+    const d = new Date(date);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  };
+
+  const calculateCommission = (prix, typePayment, driverSalaryInput, commissionInput) => {
+    const total = parseFloat(prix) || 0;
+    if (typePayment === "assurance") {
+      const commission = total * COMMISSION_RATE;
+      const driverSalary = total - commission;
+      return { commission, driverSalary };
+    } else if (typePayment === "societe") {
+      const driverSalary = parseFloat(driverSalaryInput || 0);
+      const commission = parseFloat(commissionInput || 0);
+      return { commission, driverSalary };
+    }
+    return { commission: 0, driverSalary: 0 };
+  };
+
   const fetchDrivers = async () => {
-    try {
-      const snapshot = await getDocs(collection(db, "drivers"));
-      const data = snapshot.docs.map(d => ({ driverId: d.id, ...d.data() }));
-      setDrivers(data);
-    } catch (err) {
-      console.error(err);
-      alert("Erreur lors du chargement des conducteurs");
-    }
+    const snap = await getDocs(collection(db, "drivers"));
+    const data = snap.docs.map(d => ({ driverId: d.id, ...d.data() }));
+    setDrivers(data);
   };
 
-  useEffect(() => { fetchDrivers(); }, []);
-
-  // 🔹 add driver
-  const handleAddDriver = async () => {
-    if (!newDriver.firstName.trim() || !newDriver.wilaya.trim()) {
-      alert("Le prénom et la wilaya sont obligatoires");
-      return;
-    }
-    try {
-      const ref = await addDoc(collection(db, "drivers"), newDriver);
-      setDrivers(prev => [...prev, { driverId: ref.id, ...newDriver }]);
-      setNewDriver({ firstName: "", lastName: "", phone: "", wilaya: "", region: "", trucks: 1 });
-    } catch (err) {
-      console.error(err);
-      alert("Erreur lors de l'ajout du conducteur");
-    }
+  const fetchTrips = async () => {
+    const snap = await getDocs(collection(db, "assuranceTrips"));
+    const data = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+    setTrips(data);
   };
 
-  // 🔹 delete driver
-  const handleDeleteDriver = async (driverId) => {
-    if (!window.confirm("Supprimer ce conducteur et ses demandes ?")) return;
-    try {
-      await deleteDoc(doc(db, "drivers", driverId));
-      const q = query(collection(db, "requests"), where("driverId", "==", driverId));
-      const snap = await getDocs(q);
-      for (const t of snap.docs) await deleteDoc(doc(db, "requests", t.id));
-      setDrivers(prev => prev.filter(d => d.driverId !== driverId));
-      if (selectedDriver?.driverId === driverId) setSelectedDriver(null);
-    } catch (err) {
-      console.error(err);
-      alert("Erreur lors de la suppression");
-    }
-  };
-
-  // 🔹 fetch paid commissions
-  const fetchPaidCommissions = async (driverId) => {
-    const q = query(collection(db, "driverPayments"), where("driverId", "==", driverId));
-    const snap = await getDocs(q);
-
-    let totalPaid = 0;
-    const paidMonthMap = {};
-
+  const fetchPayments = async (driverId) => {
+    const snap = await getDocs(collection(db, "driverPayments"));
+    let total = 0;
+    const map = {};
     snap.docs.forEach(d => {
       const p = d.data();
-      if (p.regle) {
+      if (p.driverId === driverId && p.regle) {
         const key = `${p.year}-${String(p.month).padStart(2, "0")}`;
-        paidMonthMap[key] = (paidMonthMap[key] || 0) + (p.amount || 0);
-        totalPaid += p.amount || 0;
+        map[key] = (map[key] || 0) + p.amount;
+        total += p.amount;
       }
     });
-
-    setPaidByMonth(paidMonthMap);
-    setPaidTotal(totalPaid);
+    setPaidByMonth(map);
+    setPaidTotal(total);
   };
 
-  // 🔹 fetch driver trips (مرة واحدة)
-  const fetchDriverTrips = async (driver) => {
-    setSelectedDriver(driver);
+  useEffect(() => {
+    fetchDrivers();
+    fetchTrips();
+  }, []);
 
-    const q = query(collection(db, "requests"), where("driverId", "==", driver.driverId));
-    const snap = await getDocs(q);
+  const handleAddOrUpdateTrip = async (e) => {
+    e.preventDefault();
+    if (!form.driverId || !form.depart || !form.destination || !form.date || !form.prix || !form.numeroDossier) {
+      alert("Remplir tous les champs !");
+      return;
+    }
 
-    const tripsData = snap.docs.map(d => {
-      const t = d.data();
-      const date = parseDate(t);
-      const price = Number(t.prix) || 0;
-      const commission = price * COMMISSION_RATE;
-      const km = Number(t.kilometrage) || 0;
-      return { id: d.id, ...t, date, price, km, commission, status: t.status || t.dispatch || "En attente" };
-    }).filter(t => t.status === "Confirmé");
+    const driver = drivers.find(d => d.driverId === form.driverId);
+    const driverName = driver ? `${driver.firstName} ${driver.lastName}` : "-";
 
-    setAllTrips(tripsData);
-    filterTripsByMonth(tripsData, monthFilter);
-
-    await fetchPaidCommissions(driver.driverId);
-  };
-
-  // 🔹 فلترة الرحلات حسب الشهر
-  const filterTripsByMonth = (trips, month) => {
-    let filtered = trips;
-    if (month) filtered = trips.filter(t => getMonthKey(t.date) === month);
-
-    const stats = filtered.reduce(
-      (acc, t) => {
-        if (!t.date) return acc;
-        acc.totalTrips += 1;
-        acc.totalCommission += t.commission;
-        const m = getMonthKey(t.date);
-        acc.monthlyCommission[m] = (acc.monthlyCommission[m] || 0) + t.commission;
-        return acc;
-      },
-      { totalTrips: 0, totalCommission: 0, monthlyCommission: {} }
+    const { commission, driverSalary } = calculateCommission(
+      form.prix,
+      form.typePayment || "assurance",
+      form.driverSalary,
+      form.commission
     );
 
-    setDriverTrips(filtered);
-    setDriverStats(stats);
+    const tripData = {
+      driverId: form.driverId,
+      depart: form.depart,
+      destination: form.destination,
+      date: form.date,
+      kilometrage: form.kilometrage || "",
+      prix: parseFloat(form.prix) || 0,
+      typePayment: form.typePayment,
+      numeroDossier: form.numeroDossier,
+      companyName: form.companyName || "",
+      driverSalary,
+      commission,
+      driverName,
+      timestamp: serverTimestamp()
+    };
+
+    if (editTripId) {
+      await updateDoc(doc(db, "assuranceTrips", editTripId), tripData);
+      setEditTripId(null);
+    } else {
+      await addDoc(collection(db, "assuranceTrips"), tripData);
+    }
+
+    setForm({
+      driverId: "",
+      depart: "",
+      destination: "",
+      date: "",
+      kilometrage: "",
+      prix: "",
+      typePayment: "assurance",
+      numeroDossier: "",
+      companyName: "",
+      driverSalary: "",
+      commission: ""
+    });
+
+    fetchTrips();
   };
 
-  // 🔹 pay commission for a month
-  const payMonthCommission = async (month, amount) => {
-    const [yearStr, monthStr] = month.split("-");
-    if (!window.confirm(`Régler ${amount} DA pour ${month} ?`)) return;
+  const handleEditTrip = (trip) => {
+    setEditTripId(trip.id);
+    setForm({
+      driverId: trip.driverId,
+      depart: trip.depart,
+      destination: trip.destination,
+      date: trip.date,
+      kilometrage: trip.kilometrage || "",
+      prix: trip.prix,
+      typePayment: trip.typePayment,
+      numeroDossier: trip.numeroDossier,
+      companyName: trip.companyName || "",
+      driverSalary: trip.driverSalary,
+      commission: trip.commission
+    });
+  };
 
+  const handleDeleteTrip = async (id) => {
+    if (!window.confirm("Voulez-vous vraiment supprimer cette course ?")) return;
+    await deleteDoc(doc(db, "assuranceTrips", id));
+    fetchTrips();
+  };
+
+  // فلترة حسب السائق، الشهر، رقم الدوسيه، ونوع الدفع
+  const filteredTrips = trips.filter(t => {
+    const matchDriver = !selectedDriverFilter || t.driverId === selectedDriverFilter;
+    const matchMonth = !monthFilter || getMonthKey(t.date) === monthFilter;
+    const matchDossier = !numeroDossierFilter || t.numeroDossier.includes(numeroDossierFilter);
+    const matchType = !typeFilter || t.typePayment === typeFilter;
+    return matchDriver && matchMonth && matchDossier && matchType;
+  });
+
+  const totalCommission = filteredTrips.reduce((a, t) => a + (t.commission || 0), 0);
+  const totalDriverSalary = filteredTrips.reduce((a, t) => a + (t.driverSalary || 0), 0);
+
+  const monthly = {};
+  filteredTrips.forEach(t => {
+    const m = getMonthKey(t.date);
+    monthly[m] = (monthly[m] || 0) + t.driverSalary;
+  });
+
+  // دفع الراتب وتحديث جدول السائقين
+  const payDriverMonth = async (month, amount) => {
+    const [year, m] = month.split("-");
+    if (!window.confirm(`Payer ${amount} DA pour ${month} ?`)) return;
+
+    // إضافة الدفع
     await addDoc(collection(db, "driverPayments"), {
-      driverId: selectedDriver.driverId,
-      month: monthStr,
-      year: Number(yearStr),
+      driverId: selectedDriverFilter,
+      month: m,
+      year: Number(year),
       amount,
       regle: true,
       paidAt: serverTimestamp()
     });
 
-    fetchDriverTrips(selectedDriver);
+    // تحديث حقل salaryPaid في جدول السائقين
+    const driverRef = doc(db, "drivers", selectedDriverFilter);
+    const driverData = drivers.find(d => d.driverId === selectedDriverFilter);
+    await updateDoc(driverRef, {
+      salaryPaid: (driverData?.salaryPaid || 0) + amount
+    });
+
+    fetchPayments(selectedDriverFilter);
+    fetchDrivers();
   };
-
-  // 🔹 undo / cancel payment
-  const undoMonthPayment = async (month) => {
-    if (!selectedDriver) return;
-    if (!window.confirm(`Annuler le paiement pour ${month} ?`)) return;
-
-    const [yearStr, monthStr] = month.split("-");
-    const q = query(
-      collection(db, "driverPayments"),
-      where("driverId", "==", selectedDriver.driverId),
-      where("year", "==", Number(yearStr)),
-      where("month", "==", monthStr),
-      where("regle", "==", true)
-    );
-
-    const snap = await getDocs(q);
-    for (const docSnap of snap.docs) {
-      await deleteDoc(doc(db, "driverPayments", docSnap.id));
-    }
-
-    fetchDriverTrips(selectedDriver);
-  };
-
-  // 🔹 effect: إعادة تصفية الرحلات عند تغيير الشهر
-  useEffect(() => {
-    if (selectedDriver) filterTripsByMonth(allTrips, monthFilter);
-  }, [monthFilter]);
 
   return (
     <div className="container mt-3">
-      <h2>Liste des conducteurs</h2>
+      <h2>🚗 Assurance / Société - Gestion des courses</h2>
 
-      {/* Ajouter conducteur */}
-      <div className="mb-4 row g-2">
-        {["firstName", "lastName", "phone", "wilaya", "region"].map((f, i) => (
-          <div key={i} className="col-md-2">
-            <input
-              className="form-control"
-              placeholder={f}
-              value={newDriver[f]}
-              onChange={e => setNewDriver({ ...newDriver, [f]: e.target.value })}
-            />
-          </div>
-        ))}
-        <div className="col-md-1">
-          <input
-            type="number"
-            className="form-control"
-            value={newDriver.trucks}
-            onChange={e => setNewDriver({ ...newDriver, trucks: Number(e.target.value) || 1 })}
-          />
+      {/* FORM */}
+      <form className="row g-3 mb-4" onSubmit={handleAddOrUpdateTrip}>
+        <div className="col-md-3">
+          <select className="form-select"
+            value={form.driverId}
+            onChange={e => setForm({ ...form, driverId: e.target.value })}>
+            <option value="">Choisir conducteur</option>
+            {drivers.map(d => (
+              <option key={d.driverId} value={d.driverId}>
+                {d.firstName} {d.lastName}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="col-md-2">
+          <input className="form-control" placeholder="Départ"
+            value={form.depart}
+            onChange={e => setForm({ ...form, depart: e.target.value })} />
+        </div>
+        <div className="col-md-2">
+          <input className="form-control" placeholder="Destination"
+            value={form.destination}
+            onChange={e => setForm({ ...form, destination: e.target.value })} />
+        </div>
+        <div className="col-md-2">
+          <input type="date" className="form-control"
+            value={form.date}
+            onChange={e => setForm({ ...form, date: e.target.value })} />
         </div>
         <div className="col-md-1">
-          <button className="btn btn-success w-100" onClick={handleAddDriver}>Ajouter</button>
+          <input type="number" className="form-control" placeholder="Km"
+            value={form.kilometrage}
+            onChange={e => setForm({ ...form, kilometrage: e.target.value })} />
+        </div>
+        <div className="col-md-2">
+          <input type="number" className="form-control" placeholder="Prix"
+            value={form.prix}
+            onChange={e => setForm({ ...form, prix: e.target.value })} />
+        </div>
+        <div className="col-md-2">
+          <input type="text" className="form-control" placeholder="Numéro Dossier"
+            value={form.numeroDossier}
+            onChange={e => setForm({ ...form, numeroDossier: e.target.value })} />
+        </div>
+        <div className="col-md-2">
+          <input type="text" className="form-control" placeholder="Nom Société"
+            value={form.companyName}
+            onChange={e => setForm({ ...form, companyName: e.target.value })} />
+        </div>
+        <div className="col-md-2">
+          <select className="form-select"
+            value={form.typePayment}
+            onChange={e => setForm({ ...form, typePayment: e.target.value })}>
+            <option value="assurance">Assurance</option>
+            <option value="societe">Société</option>
+          </select>
+        </div>
+        {form.typePayment === "societe" && (
+          <>
+            <div className="col-md-2">
+              <input type="number" className="form-control" placeholder="Salaire Chauffeur"
+                value={form.driverSalary}
+                onChange={e => setForm({ ...form, driverSalary: e.target.value })} />
+            </div>
+            <div className="col-md-2">
+              <input type="number" className="form-control" placeholder="Votre Gain"
+                value={form.commission}
+                onChange={e => setForm({ ...form, commission: e.target.value })} />
+            </div>
+          </>
+        )}
+        <div className="col-12">
+          <button className="btn btn-primary">{editTripId ? "Enregistrer" : "Ajouter"}</button>
+        </div>
+      </form>
+
+      {/* FILTER */}
+      <div className="row mb-3">
+        <div className="col-md-3">
+          <select className="form-select"
+            value={selectedDriverFilter}
+            onChange={e => {
+              setSelectedDriverFilter(e.target.value);
+              fetchPayments(e.target.value);
+            }}>
+            <option value="">Tous les conducteurs</option>
+            {drivers.map(d => (
+              <option key={d.driverId} value={d.driverId}>{d.firstName} {d.lastName}</option>
+            ))}
+          </select>
+        </div>
+        <div className="col-md-3">
+          <input type="month" className="form-control"
+            value={monthFilter}
+            onChange={e => setMonthFilter(e.target.value)} />
+        </div>
+        <div className="col-md-3">
+          <input type="text" className="form-control" placeholder="Filtrer par numéro de dossier"
+            value={numeroDossierFilter}
+            onChange={e => setNumeroDossierFilter(e.target.value)} />
+        </div>
+        <div className="col-md-3">
+          <select className="form-select"
+            value={typeFilter}
+            onChange={e => setTypeFilter(e.target.value)}>
+            <option value="">Tous les types</option>
+            <option value="assurance">Assurance</option>
+            <option value="societe">Société</option>
+          </select>
         </div>
       </div>
 
-      {/* Liste conducteurs */}
-      <div className="row">
-        {drivers.map(d => {
-          const driverTripsCount = allTrips.filter(t => t.driverId === d.driverId).length;
-          return (
-            <div key={d.driverId} className="col-md-4 mb-3">
-              <div className="card">
-                <div className="card-body">
-                  <h5>{formatField(d.firstName)} {formatField(d.lastName)}</h5>
-                  <p>Téléphone: {formatField(d.phone)}</p>
-                  <p>Wilaya: {formatField(d.wilaya)} | Région: {formatField(d.region)}</p>
-                  <p>Camions: {formatField(d.trucks)} | Trajets: {driverTripsCount}</p>
-                  <div className="d-flex gap-2">
-                    <button className="btn btn-info" onClick={() => fetchDriverTrips(d)}>Détails</button>
-                    <button className="btn btn-danger" onClick={() => handleDeleteDriver(d.driverId)}>Supprimer</button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          );
-        })}
+      {/* STATS */}
+      <div className="row mb-3">
+        <div className="col-md-4">
+          <div className="card p-3 text-center">
+            <h6>💰 Votre bénéfice</h6>
+            <h4>{totalCommission} DA</h4>
+          </div>
+        </div>
+        <div className="col-md-4">
+          <div className="card p-3 text-center bg-success text-white">
+            <h6>Payé chauffeur</h6>
+            <h4>{paidTotal} DA</h4>
+          </div>
+        </div>
+        <div className="col-md-4">
+          <div className="card p-3 text-center bg-danger text-white">
+            <h6>Reste à payer</h6>
+            <h4>{totalDriverSalary - paidTotal} DA</h4>
+          </div>
+        </div>
       </div>
 
-      {/* Détails conducteur */}
-      {selectedDriver && (
-        <div className="mt-4">
-          <h3>Détails de {formatField(selectedDriver.firstName)} {formatField(selectedDriver.lastName)}</h3>
-          <button className="btn btn-secondary mb-2" onClick={() => setSelectedDriver(null)}>Retour</button>
-
-          {/* Filtrer par mois */}
-          <div className="mb-3 row">
-            <div className="col-md-3">
-              <label className="form-label">Filtrer par mois</label>
-              <input type="month" className="form-control" value={monthFilter} onChange={e => setMonthFilter(e.target.value)} />
-            </div>
-          </div>
-
-          {/* Stats globales */}
-          <div className="row mb-3">
-            <div className="col-md-4">
-              <div className="card p-3 text-center">
-                <h6>Commission Totale</h6>
-                <h4>{driverStats.totalCommission} DA</h4>
-              </div>
-            </div>
-            <div className="col-md-4">
-              <div className="card p-3 text-center bg-success text-white">
-                <h6>Commission Payée</h6>
-                <h4>{paidTotal} DA</h4>
-              </div>
-            </div>
-            <div className="col-md-4">
-              <div className="card p-3 text-center bg-danger text-white">
-                <h6>Commission Restante</h6>
-                <h4>{driverStats.totalCommission - paidTotal} DA</h4>
-              </div>
-            </div>
-          </div>
-
-          {/* Commission mensuelle */}
-          <h5>📆 Commission Mensuelle</h5>
-          <table className="table table-bordered">
-            <thead>
-              <tr>
-                <th>Mois</th>
-                <th>Montant</th>
-                <th>État</th>
-                <th>Action</th>
+      {/* MONTH TABLE */}
+      <table className="table table-bordered">
+        <thead>
+          <tr>
+            <th>Mois</th>
+            <th>Montant</th>
+            <th>État</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {Object.entries(monthly).map(([month, val]) => {
+            const paid = paidByMonth[month] || 0;
+            const isPaid = paid >= val;
+            return (
+              <tr key={month}>
+                <td>{month}</td>
+                <td>{val} DA</td>
+                <td>{isPaid ? "Payé" : "Non payé"}</td>
+                <td>
+                  {!isPaid && selectedDriverFilter && (
+                    <button className="btn btn-success btn-sm"
+                      onClick={() => payDriverMonth(month, val)}>Payer</button>
+                  )}
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {Object.entries(driverStats.monthlyCommission).map(([month, val]) => {
-                const paidAmount = paidByMonth[month] || 0;
-                const isPaid = paidAmount >= val;
+            );
+          })}
+        </tbody>
+      </table>
 
-                return (
-                  <tr key={month}>
-                    <td>{month}</td>
-                    <td><b>{val} DA</b></td>
-                    <td>
-                      {isPaid
-                        ? <span className="badge bg-success">RÉGLÉ</span>
-                        : <span className="badge bg-warning text-dark">À PAYER</span>}
-                    </td>
-                    <td className="d-flex gap-1">
-                      {!isPaid && (
-                        <button className="btn btn-success btn-sm" onClick={() => payMonthCommission(month, val)}>
-                          Régler
-                        </button>
-                      )}
-                      {isPaid && (
-                        <button className="btn btn-danger btn-sm" onClick={() => undoMonthPayment(month)}>
-                          Annuler
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-
-          {/* Tableau des trajets */}
-          <table className="table table-bordered mt-2">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Départ</th>
-                <th>Destination</th>
-                <th>Km</th>
-                <th>Prix</th>
-                <th>Commission</th>
-              </tr>
-            </thead>
-            <tbody>
-              {driverTrips.map(t => (
-                <tr key={t.id}>
-                  <td>{formatField(t.date)}</td>
-                  <td>{formatField(t.depart)}</td>
-                  <td>{formatField(t.destination)}</td>
-                  <td>{t.km}</td>
-                  <td>{t.price} DA</td>
-                  <td>{t.commission} DA</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {/* TRIPS TABLE */}
+      <table className="table table-bordered">
+        <thead>
+          <tr>
+            <th>Conducteur</th>
+            <th>Date</th>
+            <th>Départ</th>
+            <th>Destination</th>
+            <th>Prix</th>
+            <th>Type</th>
+            <th>Numéro Dossier</th>
+            <th>Nom Société</th>
+            <th>Commission / Gain</th>
+            <th>Salaire Chauffeur</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filteredTrips.map(t => (
+            <tr key={t.id}>
+              <td>{t.driverName}</td>
+              <td>{new Date(t.date).toLocaleDateString()}</td>
+              <td>{t.depart}</td>
+              <td>{t.destination}</td>
+              <td>{t.prix}</td>
+              <td>{t.typePayment}</td>
+              <td>{t.numeroDossier}</td>
+              <td>{t.companyName}</td>
+              <td>{t.commission}</td>
+              <td>{t.driverSalary}</td>
+              <td>
+                <button className="btn btn-warning btn-sm me-2" onClick={() => handleEditTrip(t)}>Modifier</button>
+                <button className="btn btn-danger btn-sm" onClick={() => handleDeleteTrip(t.id)}>Supprimer</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
