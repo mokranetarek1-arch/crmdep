@@ -1,10 +1,12 @@
+// src/pages/Statistics.jsx
 import { useState, useEffect } from "react";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "../firebase";
 
 export default function Statistics() {
-  const [rows, setRows] = useState([]);
-  const [assuranceRows, setAssuranceRows] = useState([]);
+  const [requests, setRequests] = useState([]);
+  const [assuranceTrips, setAssuranceTrips] = useState([]);
+  const [societeTrips, setSocieteTrips] = useState([]);
   const [drivers, setDrivers] = useState([]);
 
   const [filterMonth, setFilterMonth] = useState("all");
@@ -14,14 +16,20 @@ export default function Statistics() {
     const fetchData = async () => {
       const reqSnap = await getDocs(collection(db, "requests"));
       const assSnap = await getDocs(collection(db, "assuranceTrips"));
+      const socSnap = await getDocs(collection(db, "societeTrips"));
       const drvSnap = await getDocs(collection(db, "drivers"));
 
-      setRows(reqSnap.docs.map(d => ({
+      setRequests(reqSnap.docs.map(d => ({
         ...d.data(),
         date: d.data().date?.toDate ? d.data().date.toDate() : new Date(d.data().date)
       })));
 
-      setAssuranceRows(assSnap.docs.map(d => ({
+      setAssuranceTrips(assSnap.docs.map(d => ({
+        ...d.data(),
+        date: new Date(d.data().date)
+      })));
+
+      setSocieteTrips(socSnap.docs.map(d => ({
         ...d.data(),
         date: new Date(d.data().date)
       })));
@@ -32,70 +40,47 @@ export default function Statistics() {
     fetchData();
   }, []);
 
-  // FILTER
-  const filterFn = (r) => {
+  const filterFn = r => {
     if (!r.date) return false;
     const d = new Date(r.date);
-
-    const m = filterMonth === "all" || d.getMonth() + 1 === Number(filterMonth);
-    const y = filterYear === "all" || d.getFullYear() === Number(filterYear);
-
-    return m && y;
+    const monthMatch = filterMonth === "all" || d.getMonth() + 1 === Number(filterMonth);
+    const yearMatch = filterYear === "all" || d.getFullYear() === Number(filterYear);
+    return monthMatch && yearMatch;
   };
 
-  const filteredReq = rows.filter(filterFn);
-  const filteredAss = assuranceRows.filter(filterFn);
+  const filteredReq = requests.filter(filterFn);
+  const filteredAss = assuranceTrips.filter(filterFn);
+  const filteredSoc = societeTrips.filter(filterFn);
 
-  // ===== MERGE =====
-  const totalTrips = filteredReq.length + filteredAss.length;
-
-  const confirmed =
-    filteredReq.filter(r => r.status === "Confirmé").length +
-    filteredAss.length;
-
+  // ===== STATS =====
+  const totalTrips = filteredReq.length + filteredAss.length + filteredSoc.length;
+  const confirmed = filteredReq.filter(r => r.status === "Confirmé").length + filteredAss.length + filteredSoc.length;
   const cancelled = filteredReq.filter(r => r.status === "Annulé").length;
   const pending = filteredReq.filter(r => r.status === "En cours").length;
 
-  // ✅ رجعنا taux
-  const cancelRate = totalTrips
-    ? ((cancelled / totalTrips) * 100).toFixed(1)
-    : 0;
-
-  const confirmRate = totalTrips
-    ? ((confirmed / totalTrips) * 100).toFixed(1)
-    : 0;
+  const cancelRate = totalTrips ? ((cancelled / totalTrips) * 100).toFixed(1) : 0;
+  const confirmRate = totalTrips ? ((confirmed / totalTrips) * 100).toFixed(1) : 0;
 
   // ===== COMMISSIONS =====
-  const dispatchCommission = filteredReq.reduce(
-    (acc, r) =>
-      r.status !== "Annulé"
-        ? acc + (Number(r.prix) || 0) * 0.1
-        : acc,
-    0
-  );
-
-  const assuranceCommission = filteredAss.reduce(
-    (acc, r) => acc + (Number(r.commission) || 0),
-    0
-  );
-
-  const totalCommission = dispatchCommission + assuranceCommission;
-
-  const max = Math.max(dispatchCommission, assuranceCommission, totalCommission);
+  const dispatchCommission = filteredReq.reduce((acc, r) => r.status !== "Annulé" ? acc + (Number(r.prix) * 0.1 || 0) : acc, 0);
+  const assuranceCommission = filteredAss.reduce((acc, r) => acc + (Number(r.commission) || 0), 0);
+  const societeCommission = filteredSoc.reduce((acc, r) => acc + (Number(r.commission) || 0), 0);
+  const totalCommission = dispatchCommission + assuranceCommission + societeCommission;
+  const max = Math.max(dispatchCommission, assuranceCommission, societeCommission, totalCommission);
 
   return (
     <div className="container mt-4">
-      <h2>📊 Dashboard Global</h2>
+      <h2 className="mb-4 text-primary fw-bold">📊 Statestique</h2>
 
       {/* FILTER */}
-      <div className="row mb-4">
+      <div className="row mb-4 g-3">
         <div className="col-md-3">
           <select
             className="form-select"
             value={filterMonth}
-            onChange={(e) => setFilterMonth(e.target.value)}
+            onChange={e => setFilterMonth(e.target.value)}
           >
-            <option value="all">All months</option>
+            <option value="all">Tous les mois</option>
             {[...Array(12).keys()].map(m => (
               <option key={m} value={m + 1}>
                 {new Date(0, m).toLocaleString("fr-FR", { month: "long" })}
@@ -103,85 +88,83 @@ export default function Statistics() {
             ))}
           </select>
         </div>
-
         <div className="col-md-3">
           <input
             type="number"
             className="form-control"
-            placeholder="Year"
-            onChange={(e) => setFilterYear(e.target.value || "all")}
+            placeholder="Année"
+            onChange={e => setFilterYear(e.target.value || "all")}
           />
         </div>
       </div>
 
       {/* CARDS */}
-      <div className="row g-3 mb-4">
-        <Card title="Total Trajets" value={totalTrips} color="primary" />
-        <Card title="Confirmés" value={confirmed} color="success" />
-        <Card title="Annulés" value={cancelled} color="danger" />
-        <Card title="En cours" value={pending} color="warning" />
-        <Card title="Total Commission" value={totalCommission.toFixed(0) + " DA"} color="dark" />
-        <Card title="Chauffeurs" value={drivers.length} color="info" />
+      <div className="row g-4 mb-4">
+        <DashboardCard title="Total Trajets" value={totalTrips} color="bg-primary text-white" />
+        <DashboardCard title="Confirmés" value={confirmed} color="bg-success text-white" />
+        <DashboardCard title="Annulés" value={cancelled} color="bg-danger text-white" />
+        <DashboardCard title="En cours" value={pending} color="bg-warning text-dark" />
+        <DashboardCard title="Total Commission" value={totalCommission.toFixed(0) + " DA"} color="bg-dark text-white" />
+        <DashboardCard title="Chauffeurs" value={drivers.length} color="bg-info text-white" />
       </div>
 
-      {/* ✅ TAUX */}
-      <div className="card p-3 mb-4">
-        <h5>📊 Taux global</h5>
-
-        <p className="mb-2">
-          Taux d'annulation
-          <span className="float-end text-danger fw-bold">{cancelRate}%</span>
-        </p>
-        <div className="progress mb-3">
-          <div className="progress-bar bg-danger" style={{ width: cancelRate + "%" }} />
-        </div>
-
-        <p className="mb-2">
-          Taux de confirmation
-          <span className="float-end text-success fw-bold">{confirmRate}%</span>
-        </p>
-        <div className="progress">
-          <div className="progress-bar bg-success" style={{ width: confirmRate + "%" }} />
-        </div>
+      {/* TAUX */}
+      <div className="card mb-4 p-4 shadow-sm">
+        <h5 className="fw-bold mb-3">📊 Taux global</h5>
+        <ProgressBar label="Annulation" percent={cancelRate} color="bg-danger" />
+        <ProgressBar label="Confirmation" percent={confirmRate} color="bg-success" />
       </div>
 
-      {/* GRAPH */}
-      <div className="card p-3">
-        <h5>📊 Comparaison des commissions</h5>
-
-        <Bar label="Particulier" value={dispatchCommission} max={max} color="bg-primary" />
-        <Bar label="Assurance" value={assuranceCommission} max={max} color="bg-success" />
-        <Bar label="Total" value={totalCommission} max={max} color="bg-dark" />
+      {/* BAR GRAPH */}
+      <div className="card p-4 shadow-sm">
+        <h5 className="fw-bold mb-3">📊 Comparaison des commissions</h5>
+        <BarGraph label="Particulier" value={dispatchCommission} max={max} color="bg-primary" />
+        <BarGraph label="B2B" value={assuranceCommission} max={max} color="bg-success" />
+        <BarGraph label="Total" value={totalCommission} max={max} color="bg-dark" />
       </div>
     </div>
   );
 }
 
-// CARD
-function Card({ title, value, color }) {
+// CARD COMPONENT
+function DashboardCard({ title, value, color }) {
   return (
     <div className="col-md-3">
-      <div className={`card border-${color}`}>
+      <div className={`card ${color} shadow-sm`}>
         <div className="card-body text-center">
-          <h6>{title}</h6>
-          <h3 className={`text-${color}`}>{value}</h3>
+          <h6 className="fw-bold">{title}</h6>
+          <h3 className="fw-bold">{value}</h3>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// PROGRESS BAR
+function ProgressBar({ label, percent, color }) {
+  return (
+    <div className="mb-3">
+      <div className="d-flex justify-content-between">
+        <span>{label}</span>
+        <span className="fw-bold">{percent}%</span>
+      </div>
+      <div className="progress" style={{ height: "20px" }}>
+        <div className={`progress-bar ${color}`} role="progressbar" style={{ width: percent + "%" }} />
       </div>
     </div>
   );
 }
 
 // BAR GRAPH
-function Bar({ label, value, max, color }) {
+function BarGraph({ label, value, max, color }) {
   const percent = max ? (value / max) * 100 : 0;
-
   return (
     <div className="mb-3">
       <div className="d-flex justify-content-between">
         <span>{label}</span>
         <b>{value.toFixed(0)} DA</b>
       </div>
-      <div className="progress">
+      <div className="progress" style={{ height: "18px" }}>
         <div className={`progress-bar ${color}`} style={{ width: percent + "%" }} />
       </div>
     </div>
