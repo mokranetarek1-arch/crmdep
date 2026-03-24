@@ -149,7 +149,7 @@ export default function Statistics() {
       <div className="card p-3">
         <h5>📊 Comparaison des commissions</h5>
 
-        <Bar label="Dispatch" value={dispatchCommission} max={max} color="bg-primary" />
+        <Bar label="Particulier" value={dispatchCommission} max={max} color="bg-primary" />
         <Bar label="Assurance" value={assuranceCommission} max={max} color="bg-success" />
         <Bar label="Total" value={totalCommission} max={max} color="bg-dark" />
       </div>
