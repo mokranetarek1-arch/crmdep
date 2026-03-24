@@ -2,137 +2,187 @@ import { useState, useEffect } from "react";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "../firebase";
 
-const COMMISSION_RATE = 0.1; // 10%
-
 export default function Statistics() {
   const [rows, setRows] = useState([]);
-  const [filterMonth, setFilterMonth] = useState("all"); // all = كل الأشهر
-  const [filterYear, setFilterYear] = useState("all");   // all = كل السنوات
+  const [assuranceRows, setAssuranceRows] = useState([]);
+  const [drivers, setDrivers] = useState([]);
+
+  const [filterMonth, setFilterMonth] = useState("all");
+  const [filterYear, setFilterYear] = useState("all");
 
   useEffect(() => {
-    const fetchTrips = async () => {
-      try {
-        const snapshot = await getDocs(collection(db, "requests"));
-        const data = snapshot.docs.map(doc => {
-          const d = doc.data();
-          return {
-            id: doc.id,
-            ...d,
-            date: d.date?.toDate ? d.date.toDate() : d.date ? new Date(d.date) : null
-          };
-        });
-        setRows(data);
-      } catch (err) {
-        console.error("Erreur fetch trips:", err);
-      }
+    const fetchData = async () => {
+      const reqSnap = await getDocs(collection(db, "requests"));
+      const assSnap = await getDocs(collection(db, "assuranceTrips"));
+      const drvSnap = await getDocs(collection(db, "drivers"));
+
+      setRows(reqSnap.docs.map(d => ({
+        ...d.data(),
+        date: d.data().date?.toDate ? d.data().date.toDate() : new Date(d.data().date)
+      })));
+
+      setAssuranceRows(assSnap.docs.map(d => ({
+        ...d.data(),
+        date: new Date(d.data().date)
+      })));
+
+      setDrivers(drvSnap.docs);
     };
 
-    fetchTrips();
+    fetchData();
   }, []);
 
-  // 🔹 فلترة حسب الشهر والسنة مع خيار ALL
-  const filteredRows = rows.filter(r => {
+  // FILTER
+  const filterFn = (r) => {
     if (!r.date) return false;
-    const d = r.date instanceof Date ? r.date : new Date(r.date);
+    const d = new Date(r.date);
 
-    const monthMatch = filterMonth === "all" ? true : d.getMonth() + 1 === Number(filterMonth);
-    const yearMatch = filterYear === "all" ? true : d.getFullYear() === Number(filterYear);
+    const m = filterMonth === "all" || d.getMonth() + 1 === Number(filterMonth);
+    const y = filterYear === "all" || d.getFullYear() === Number(filterYear);
 
-    return monthMatch && yearMatch;
-  });
+    return m && y;
+  };
 
-  const total = filteredRows.length;
-  const cancelled = filteredRows.filter(r => r.status === "Annulé").length;
-  const confirmed = filteredRows.filter(r => r.status === "Confirmé").length;
-  const pending = filteredRows.filter(r => r.status === "En cours").length;
+  const filteredReq = rows.filter(filterFn);
+  const filteredAss = assuranceRows.filter(filterFn);
 
-  const totalCommission = filteredRows.reduce((acc, r) => {
-    if (r.status !== "Annulé") return acc + (Number(r.prix) || 0) * COMMISSION_RATE;
-    return acc;
-  }, 0);
+  // ===== MERGE =====
+  const totalTrips = filteredReq.length + filteredAss.length;
 
-  const cancelRate = total ? ((cancelled / total) * 100).toFixed(1) : 0;
-  const confirmRate = total ? ((confirmed / total) * 100).toFixed(1) : 0;
+  const confirmed =
+    filteredReq.filter(r => r.status === "Confirmé").length +
+    filteredAss.length;
+
+  const cancelled = filteredReq.filter(r => r.status === "Annulé").length;
+  const pending = filteredReq.filter(r => r.status === "En cours").length;
+
+  // ✅ رجعنا taux
+  const cancelRate = totalTrips
+    ? ((cancelled / totalTrips) * 100).toFixed(1)
+    : 0;
+
+  const confirmRate = totalTrips
+    ? ((confirmed / totalTrips) * 100).toFixed(1)
+    : 0;
+
+  // ===== COMMISSIONS =====
+  const dispatchCommission = filteredReq.reduce(
+    (acc, r) =>
+      r.status !== "Annulé"
+        ? acc + (Number(r.prix) || 0) * 0.1
+        : acc,
+    0
+  );
+
+  const assuranceCommission = filteredAss.reduce(
+    (acc, r) => acc + (Number(r.commission) || 0),
+    0
+  );
+
+  const totalCommission = dispatchCommission + assuranceCommission;
+
+  const max = Math.max(dispatchCommission, assuranceCommission, totalCommission);
 
   return (
     <div className="container mt-4">
-      {/* ===== FILTRE MOIS / ANNEE ===== */}
-      <div className="row g-3 mb-4">
+      <h2>📊 Dashboard Global</h2>
+
+      {/* FILTER */}
+      <div className="row mb-4">
         <div className="col-md-3">
-          <label className="form-label">Mois :</label>
           <select
             className="form-select"
             value={filterMonth}
             onChange={(e) => setFilterMonth(e.target.value)}
           >
-            <option value="all">All</option>
+            <option value="all">All months</option>
             {[...Array(12).keys()].map(m => (
               <option key={m} value={m + 1}>
-                {new Date(0, m).toLocaleString('fr-FR', { month: 'long' })}
+                {new Date(0, m).toLocaleString("fr-FR", { month: "long" })}
               </option>
             ))}
           </select>
         </div>
 
         <div className="col-md-3">
-          <label className="form-label">Année :</label>
           <input
             type="number"
             className="form-control"
-            value={filterYear}
+            placeholder="Year"
             onChange={(e) => setFilterYear(e.target.value || "all")}
-            placeholder="All"
           />
         </div>
       </div>
 
-      {/* ===== STAT CARDS ===== */}
+      {/* CARDS */}
       <div className="row g-3 mb-4">
-        <StatCard title="Total des trajets" value={total} color="primary" />
-        <StatCard title="Trajets confirmés" value={confirmed} color="success" />
-        <StatCard title="Trajets annulés" value={cancelled} color="danger" />
-        <StatCard title="En cours" value={pending} color="warning" />
-        <StatCard title="Commission totale" value={`${totalCommission.toFixed(2)} DA`} color="info" />
+        <Card title="Total Trajets" value={totalTrips} color="primary" />
+        <Card title="Confirmés" value={confirmed} color="success" />
+        <Card title="Annulés" value={cancelled} color="danger" />
+        <Card title="En cours" value={pending} color="warning" />
+        <Card title="Total Commission" value={totalCommission.toFixed(0) + " DA"} color="dark" />
+        <Card title="Chauffeurs" value={drivers.length} color="info" />
       </div>
 
-      {/* ===== BARRES DE PROGRESSION ===== */}
-      <div className="row">
-        <div className="col-md-6">
-          <div className="card shadow-sm">
-            <div className="card-body">
-              <h6 className="card-title">Taux de confirmation / annulation</h6>
+      {/* ✅ TAUX */}
+      <div className="card p-3 mb-4">
+        <h5>📊 Taux global</h5>
 
-              <p className="mb-2">
-                Taux d'annulation
-                <span className="float-end fw-bold text-danger">{cancelRate}%</span>
-              </p>
-              <div className="progress mb-3" style={{ height: '20px' }}>
-                <div className="progress-bar bg-danger" style={{ width: `${cancelRate}%` }} />
-              </div>
+        <p className="mb-2">
+          Taux d'annulation
+          <span className="float-end text-danger fw-bold">{cancelRate}%</span>
+        </p>
+        <div className="progress mb-3">
+          <div className="progress-bar bg-danger" style={{ width: cancelRate + "%" }} />
+        </div>
 
-              <p className="mb-2">
-                Taux de confirmation
-                <span className="float-end fw-bold text-success">{confirmRate}%</span>
-              </p>
-              <div className="progress" style={{ height: '20px' }}>
-                <div className="progress-bar bg-success" style={{ width: `${confirmRate}%` }} />
-              </div>
-            </div>
-          </div>
+        <p className="mb-2">
+          Taux de confirmation
+          <span className="float-end text-success fw-bold">{confirmRate}%</span>
+        </p>
+        <div className="progress">
+          <div className="progress-bar bg-success" style={{ width: confirmRate + "%" }} />
+        </div>
+      </div>
+
+      {/* GRAPH */}
+      <div className="card p-3">
+        <h5>📊 Comparaison des commissions</h5>
+
+        <Bar label="Dispatch" value={dispatchCommission} max={max} color="bg-primary" />
+        <Bar label="Assurance" value={assuranceCommission} max={max} color="bg-success" />
+        <Bar label="Total" value={totalCommission} max={max} color="bg-dark" />
+      </div>
+    </div>
+  );
+}
+
+// CARD
+function Card({ title, value, color }) {
+  return (
+    <div className="col-md-3">
+      <div className={`card border-${color}`}>
+        <div className="card-body text-center">
+          <h6>{title}</h6>
+          <h3 className={`text-${color}`}>{value}</h3>
         </div>
       </div>
     </div>
   );
 }
 
-function StatCard({ title, value, color }) {
+// BAR GRAPH
+function Bar({ label, value, max, color }) {
+  const percent = max ? (value / max) * 100 : 0;
+
   return (
-    <div className="col-md-3">
-      <div className={`card border-${color} shadow-sm`}>
-        <div className="card-body text-center">
-          <h6 className="text-muted">{title}</h6>
-          <h2 className={`text-${color} fw-bold`}>{value}</h2>
-        </div>
+    <div className="mb-3">
+      <div className="d-flex justify-content-between">
+        <span>{label}</span>
+        <b>{value.toFixed(0)} DA</b>
+      </div>
+      <div className="progress">
+        <div className={`progress-bar ${color}`} style={{ width: percent + "%" }} />
       </div>
     </div>
   );
