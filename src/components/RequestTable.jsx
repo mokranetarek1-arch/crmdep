@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { collection, deleteDoc, doc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
 
@@ -14,7 +14,10 @@ export default function RequestTable({ onEdit }) {
   const [statusFilter, setStatusFilter] = useState("");
   const [motifFilter, setMotifFilter] = useState("");
   const [numberSearch, setNumberSearch] = useState("");
-  const [selectedNote, setSelectedNote] = useState("");
+  const [sortOrder, setSortOrder] = useState("recent");
+  const [pageSize, setPageSize] = useState(10);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [selectedNoteRowId, setSelectedNoteRowId] = useState("");
 
   const sendWhatsApp = (phone, name, depart, destination, amount) => {
     if (!phone) return alert("Numero manquant");
@@ -59,42 +62,74 @@ Merci pour votre confiance`;
     return () => unsubscribe();
   }, []);
 
-  const filteredRows = rows.filter((row) => {
-    const dateObj = row.date?.toDate ? row.date.toDate() : row.date ? new Date(row.date) : null;
-    const dateStr = dateObj ? dateObj.toISOString().slice(0, 10) : "";
+  const getCreationDate = (row) => {
+    if (row.createdAt?.toDate) return row.createdAt.toDate();
+    if (row.createdAt) return new Date(row.createdAt);
+    if (row.timestamp?.toDate) return row.timestamp.toDate();
+    if (row.updatedAt?.toDate) return row.updatedAt.toDate();
+    return null;
+  };
+
+  const formatCreatedAt = (row) => {
+    const created = getCreationDate(row);
+    return created ? created.toLocaleString("fr-FR") : "-";
+  };
+
+  const filteredRows = useMemo(() => {
     const query = numberSearch.trim().toLowerCase();
-    const phone = String(row.phone || "").toLowerCase();
-    const requestId = String(row.id || "").toLowerCase();
-    const dossier = String(row.numeroDossier || "").toLowerCase();
 
-    const matchDate = dateFilter ? dateStr === dateFilter : true;
+    const filtered = rows.filter((row) => {
+      const dateObj = row.date?.toDate ? row.date.toDate() : row.date ? new Date(row.date) : null;
+      const dateStr = dateObj ? dateObj.toISOString().slice(0, 10) : "";
+      const phone = String(row.phone || "").toLowerCase();
+      const requestId = String(row.id || "").toLowerCase();
+      const dossier = String(row.numeroDossier || "").toLowerCase();
 
-    let matchDay = true;
-    if (dayFilter && dateObj) {
-      const dayName = dateObj.toLocaleDateString("en-US", { weekday: "long" });
-      matchDay = dayName === dayFilter;
-    }
+      const matchDate = dateFilter ? dateStr === dateFilter : true;
 
-    let matchMonthYear = true;
-    if (monthFilter !== "" && yearFilter !== "" && dateObj) {
-      matchMonthYear =
-        dateObj.getMonth() === parseInt(monthFilter, 10) &&
-        dateObj.getFullYear() === parseInt(yearFilter, 10);
-    }
+      let matchDay = true;
+      if (dayFilter && dateObj) {
+        const dayName = dateObj.toLocaleDateString("en-US", { weekday: "long" });
+        matchDay = dayName === dayFilter;
+      }
 
-    const matchStatus = statusFilter
-      ? statusFilter === "Confirmé"
-        ? isConfirmedStatus(row.status)
-        : statusFilter === "Annulé"
-        ? isCancelledStatus(row.status)
-        : row.status === statusFilter
-      : true;
+      let matchMonthYear = true;
+      if (monthFilter !== "" && yearFilter !== "" && dateObj) {
+        matchMonthYear =
+          dateObj.getMonth() === parseInt(monthFilter, 10) &&
+          dateObj.getFullYear() === parseInt(yearFilter, 10);
+      }
 
-    const matchMotif = motifFilter ? row.motif === motifFilter : true;
-    const matchNumber = query ? phone.includes(query) || requestId.includes(query) || dossier.includes(query) : true;
+      const matchStatus = statusFilter
+        ? statusFilter === "Confirmé"
+          ? isConfirmedStatus(row.status)
+          : statusFilter === "Annulé"
+          ? isCancelledStatus(row.status)
+          : row.status === statusFilter
+        : true;
 
-    return matchDate && matchDay && matchMonthYear && matchStatus && matchMotif && matchNumber;
-  });
+      const matchMotif = motifFilter ? row.motif === motifFilter : true;
+      const matchNumber = query ? phone.includes(query) || requestId.includes(query) || dossier.includes(query) : true;
+
+      return matchDate && matchDay && matchMonthYear && matchStatus && matchMotif && matchNumber;
+    });
+
+    return filtered.sort((first, second) => {
+      const firstTime = getCreationDate(first)?.getTime() || 0;
+      const secondTime = getCreationDate(second)?.getTime() || 0;
+      return sortOrder === "recent" ? secondTime - firstTime : firstTime - secondTime;
+    });
+  }, [rows, dateFilter, dayFilter, monthFilter, yearFilter, statusFilter, motifFilter, numberSearch, sortOrder]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [dateFilter, dayFilter, monthFilter, yearFilter, statusFilter, motifFilter, numberSearch, sortOrder, pageSize]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const paginatedRows = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredRows.slice(start, start + pageSize);
+  }, [filteredRows, currentPage, pageSize]);
 
   const handleDelete = async (docId) => {
     if (!window.confirm("Voulez-vous vraiment supprimer ce trajet ?")) return;
@@ -106,20 +141,6 @@ Merci pour votre confiance`;
       console.error("Delete error:", err);
       alert("Erreur lors de la suppression");
     }
-  };
-
-  const formatCreatedAt = (row) => {
-    const created = row.createdAt?.toDate
-      ? row.createdAt.toDate()
-      : row.createdAt
-      ? new Date(row.createdAt)
-      : row.timestamp?.toDate
-      ? row.timestamp.toDate()
-      : row.updatedAt?.toDate
-      ? row.updatedAt.toDate()
-      : null;
-
-    return created ? created.toLocaleString("fr-FR") : "-";
   };
 
   return (
@@ -206,6 +227,29 @@ Merci pour votre confiance`;
         </div>
       </div>
 
+      <div className="row mb-3 g-3 align-items-end">
+        <div className="col-md-2">
+          <label>Classement :</label>
+          <select className="form-select" value={sortOrder} onChange={(e) => setSortOrder(e.target.value)}>
+            <option value="recent">Plus recent</option>
+            <option value="oldest">Plus ancien</option>
+          </select>
+        </div>
+        <div className="col-md-2">
+          <label>Liste :</label>
+          <select className="form-select" value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))}>
+            <option value={10}>10</option>
+            <option value={20}>20</option>
+            <option value={50}>50</option>
+          </select>
+        </div>
+        <div className="col-md-3">
+          <span className="text-muted small">
+            {filteredRows.length} course(s) | page {currentPage}/{totalPages}
+          </span>
+        </div>
+      </div>
+
       <div className="table-responsive">
         <table className="table table-hover align-middle">
           <thead className="table-light">
@@ -234,16 +278,18 @@ Merci pour votre confiance`;
             </tr>
           </thead>
           <tbody>
-            {filteredRows.length === 0 ? (
+            {paginatedRows.length === 0 ? (
               <tr>
                 <td colSpan="21" className="text-center text-muted py-3">
                   Aucun trajet trouve
                 </td>
               </tr>
             ) : (
-              filteredRows.map((row) => {
+              paginatedRows.flatMap((row) => {
                 const dateObj = row.date?.toDate ? row.date.toDate() : row.date ? new Date(row.date) : null;
-                return (
+                const isNoteOpen = selectedNoteRowId === row.docId;
+
+                return [
                   <tr key={row.docId}>
                     <td>{row.source}</td>
                     <td>{row.id}</td>
@@ -279,13 +325,14 @@ Merci pour votre confiance`;
                     <td style={{ maxWidth: "150px", cursor: "pointer" }}>
                       {row.note ? (
                         <span
-                          onClick={() => setSelectedNote(row.note)}
+                          onClick={() => setSelectedNoteRowId(isNoteOpen ? "" : row.docId)}
                           style={{
                             display: "inline-block",
                             whiteSpace: "nowrap",
                             overflow: "hidden",
                             textOverflow: "ellipsis",
                             maxWidth: "150px",
+                            color: "#0d6efd",
                           }}
                         >
                           {row.note}
@@ -310,49 +357,47 @@ Merci pour votre confiance`;
                         </button>
                       )}
                     </td>
-                  </tr>
-                );
+                  </tr>,
+                  isNoteOpen ? (
+                    <tr key={`${row.docId}-note`}>
+                      <td colSpan="21" className="bg-light">
+                        <div
+                          style={{
+                            padding: "14px 16px",
+                            borderLeft: "4px solid #0d6efd",
+                            whiteSpace: "pre-wrap",
+                            lineHeight: 1.7,
+                          }}
+                        >
+                          <strong className="d-block mb-2">Note de la course</strong>
+                          {row.note}
+                        </div>
+                      </td>
+                    </tr>
+                  ) : null,
+                ];
               })
             )}
           </tbody>
         </table>
       </div>
 
-      {selectedNote && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            backgroundColor: "rgba(15, 23, 42, 0.45)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "20px",
-            zIndex: 1050,
-          }}
-          onClick={() => setSelectedNote("")}
+      <div className="d-flex justify-content-between align-items-center mt-3">
+        <button
+          className="btn btn-outline-secondary btn-sm"
+          disabled={currentPage === 1}
+          onClick={() => setCurrentPage((page) => Math.max(page - 1, 1))}
         >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: "100%",
-              maxWidth: "640px",
-              background: "#fff",
-              borderRadius: "20px",
-              boxShadow: "0 24px 80px rgba(15, 23, 42, 0.22)",
-              overflow: "hidden",
-            }}
-          >
-            <div className="d-flex justify-content-between align-items-center px-4 py-3 border-bottom">
-              <h5 className="modal-title mb-0">Note</h5>
-              <button className="btn-close" onClick={() => setSelectedNote("")}></button>
-            </div>
-            <div className="px-4 py-4">
-              <p style={{ whiteSpace: "pre-wrap", marginBottom: 0, lineHeight: 1.7 }}>{selectedNote}</p>
-            </div>
-          </div>
-        </div>
-      )}
+          Precedent
+        </button>
+        <button
+          className="btn btn-outline-secondary btn-sm"
+          disabled={currentPage === totalPages}
+          onClick={() => setCurrentPage((page) => Math.min(page + 1, totalPages))}
+        >
+          Suivant
+        </button>
+      </div>
     </div>
   );
 }
