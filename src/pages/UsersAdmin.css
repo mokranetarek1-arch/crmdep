@@ -1,0 +1,135 @@
+.users-admin-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.users-admin-stat {
+  border-radius: 20px;
+  background: linear-gradient(180deg, #fff 0%, #f8fafc 100%);
+}
+
+.users-admin-stat__value {
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+
+.users-admin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1rem;
+}
+
+.users-admin-card {
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 22px;
+  padding: 1.25rem;
+  background: linear-gradient(180deg, #fff, #f8fbff);
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.06);
+}
+
+.users-admin-card--pending {
+  border-color: rgba(245, 158, 11, 0.28);
+  background: linear-gradient(180deg, #fffaf0, #fff7e6);
+}
+
+.users-admin-card__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  margin-bottom: 0.85rem;
+}
+
+.users-admin-card__header h3 {
+  margin: 0 0 0.15rem;
+  font-size: 1.1rem;
+  font-weight: 800;
+}
+
+.users-admin-card__header p {
+  margin: 0;
+  color: #64748b;
+}
+
+.users-admin-meta {
+  display: grid;
+  gap: 0.35rem;
+  margin-bottom: 1rem;
+  color: #475569;
+  font-size: 0.92rem;
+}
+
+.users-admin-selects {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.users-admin-permissions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+  padding-top: 1rem;
+  margin-top: 1rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.users-admin-permission {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.users-admin-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.users-admin-stats div {
+  border-radius: 16px;
+  padding: 0.85rem;
+  background: rgba(226, 232, 240, 0.45);
+}
+
+.users-admin-stats strong {
+  display: block;
+  font-size: 1.4rem;
+  line-height: 1;
+}
+
+.users-admin-stats span {
+  display: block;
+  margin-top: 0.3rem;
+  color: #475569;
+  font-size: 0.9rem;
+}
+
+.users-admin-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.users-admin-empty {
+  padding: 1rem;
+  border-radius: 18px;
+  text-align: center;
+  color: #64748b;
+  background: #f8fafc;
+}
+
+@media (max-width: 768px) {
+  .users-admin-selects,
+  .users-admin-permissions,
+  .users-admin-stats {
+    grid-template-columns: 1fr;
+  }
+}

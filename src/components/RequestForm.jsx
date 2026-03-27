@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { addDoc, collection, serverTimestamp, doc, updateDoc } from "firebase/firestore";
 import { db } from "../firebase";
 
-export default function RequestForm({ drivers = [], editData = null, onSave }) {
+export default function RequestForm({ drivers = [], editData = null, onSave, currentUser, adminProfile }) {
   const defaultForm = {
     source: "Appel",
     id: "client",
@@ -62,6 +62,9 @@ export default function RequestForm({ drivers = [], editData = null, onSave }) {
           ...form,
           driverId: form.chauffeur,
           driverName: form.driverName,
+          updatedByUid: currentUser?.uid || "",
+          updatedByEmail: currentUser?.email || "",
+          updatedByName: adminProfile?.displayName || currentUser?.displayName || "",
           updatedAt: serverTimestamp()
         });
         alert("Demande mise à jour avec succès !");
@@ -70,6 +73,9 @@ export default function RequestForm({ drivers = [], editData = null, onSave }) {
           ...form,
           driverId: form.chauffeur,
           driverName: form.driverName,
+          createdByUid: currentUser?.uid || "",
+          createdByEmail: currentUser?.email || "",
+          createdByName: adminProfile?.displayName || currentUser?.displayName || "",
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         });

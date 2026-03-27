@@ -51,7 +51,7 @@ function formatAmount(value) {
   return Number.isFinite(amount) ? `${amount.toLocaleString("fr-FR")} DZD` : "0 DZD";
 }
 
-export default function StoreAdmin() {
+export default function StoreAdmin({ currentUser, adminProfile }) {
   const [bookings, setBookings] = useState([]);
   const [productOrders, setProductOrders] = useState([]);
   const [products, setProducts] = useState([]);
@@ -221,6 +221,9 @@ export default function StoreAdmin() {
         imageURL: productForm.imageURL.trim(),
         imageURLs: gallery,
         description: productForm.description.trim(),
+        updatedByUid: currentUser?.uid || "",
+        updatedByEmail: currentUser?.email || "",
+        updatedByName: adminProfile?.displayName || currentUser?.displayName || "",
         updatedAt: serverTimestamp(),
       };
 
@@ -229,6 +232,9 @@ export default function StoreAdmin() {
       } else {
         await addDoc(collection(db, "products"), {
           ...payload,
+          createdByUid: currentUser?.uid || "",
+          createdByEmail: currentUser?.email || "",
+          createdByName: adminProfile?.displayName || currentUser?.displayName || "",
           createdAt: serverTimestamp(),
         });
       }

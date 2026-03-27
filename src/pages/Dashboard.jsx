@@ -5,7 +5,7 @@ import { db } from "../firebase";
 import RequestForm from "../components/RequestForm";
 import RequestTable from "../components/RequestTable";
 
-export default function Dashboard() {
+export default function Dashboard({ currentUser, adminProfile }) {
   const [drivers, setDrivers] = useState([]);
   const [editData, setEditData] = useState(null); // الطلب المراد تعديله
   const [refreshKey, setRefreshKey] = useState(0);
@@ -41,6 +41,8 @@ export default function Dashboard() {
         editData={editData}
         onSave={handleSave}
         onCancelEdit={() => setEditData(null)}
+        currentUser={currentUser}
+        adminProfile={adminProfile}
       />
       <RequestTable
         key={refreshKey}
