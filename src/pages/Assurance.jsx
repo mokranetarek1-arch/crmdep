@@ -12,6 +12,7 @@ import { db } from "../firebase";
 
 const COMMISSION_RATE = 0.1;
 const PAYMENT_SOURCE = "assuranceTrips";
+const tripStatuses = ["En cours", "Confirme", "Annule"];
 
 function getMonthKey(date) {
   const d = new Date(date);
@@ -36,8 +37,10 @@ export default function Assurance() {
     kilometrage: "",
     prix: "",
     typePayment: "assurance",
+    status: "En cours",
     numeroDossier: "",
     companyName: "",
+    note: "",
     driverSalary: "",
     commission: "",
   });
@@ -46,6 +49,9 @@ export default function Assurance() {
   const [monthFilter, setMonthFilter] = useState("");
   const [numeroDossierFilter, setNumeroDossierFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+
+  const isConfirmedStatus = (value) => String(value || "").toLowerCase().includes("confirm");
 
   const calculateCommission = (prix, typePayment, driverSalaryInput, commissionInput) => {
     const total = parseFloat(prix) || 0;
@@ -118,8 +124,10 @@ export default function Assurance() {
       kilometrage: form.kilometrage || "",
       prix: parseFloat(form.prix) || 0,
       typePayment: form.typePayment,
+      status: form.status || "En cours",
       numeroDossier: form.numeroDossier,
       companyName: form.companyName || "",
+      note: form.note || "",
       driverSalary,
       commission,
       timestamp: serverTimestamp(),
@@ -140,8 +148,10 @@ export default function Assurance() {
       kilometrage: "",
       prix: "",
       typePayment: "assurance",
+      status: "En cours",
       numeroDossier: "",
       companyName: "",
+      note: "",
       driverSalary: "",
       commission: "",
     });
@@ -159,8 +169,10 @@ export default function Assurance() {
       kilometrage: trip.kilometrage || "",
       prix: trip.prix,
       typePayment: trip.typePayment,
+      status: trip.status || "En cours",
       numeroDossier: trip.numeroDossier,
       companyName: trip.companyName || "",
+      note: trip.note || "",
       driverSalary: trip.driverSalary,
       commission: trip.commission,
     });
@@ -181,16 +193,22 @@ export default function Assurance() {
           !numeroDossierFilter ||
           String(trip.numeroDossier || "").toLowerCase().includes(numeroDossierFilter.toLowerCase());
         const matchType = !typeFilter || trip.typePayment === typeFilter;
-        return matchDriver && matchMonth && matchDossier && matchType;
+        const matchStatus = !statusFilter || (trip.status || "En cours") === statusFilter;
+        return matchDriver && matchMonth && matchDossier && matchType && matchStatus;
       }),
-    [trips, selectedDriverFilter, monthFilter, numeroDossierFilter, typeFilter]
+    [trips, selectedDriverFilter, monthFilter, numeroDossierFilter, typeFilter, statusFilter]
+  );
+
+  const confirmedTrips = useMemo(
+    () => filteredTrips.filter((trip) => isConfirmedStatus(trip.status)),
+    [filteredTrips]
   );
 
   const monthlyDriverSalary = useMemo(() => {
     const grouped = {};
     const visibleDriverIds = new Set();
 
-    filteredTrips.forEach((trip) => {
+    confirmedTrips.forEach((trip) => {
       const key = getMonthKey(trip.date);
       grouped[key] = (grouped[key] || 0) + (Number(trip.driverSalary) || 0);
       if (trip.driverId) {
@@ -218,10 +236,10 @@ export default function Assurance() {
           isPaid: paid >= total && total > 0,
         };
       });
-  }, [filteredTrips, payments]);
+  }, [confirmedTrips, payments]);
 
-  const totalCommission = filteredTrips.reduce((sum, trip) => sum + (Number(trip.commission) || 0), 0);
-  const totalDriverSalary = filteredTrips.reduce((sum, trip) => sum + (Number(trip.driverSalary) || 0), 0);
+  const totalCommission = confirmedTrips.reduce((sum, trip) => sum + (Number(trip.commission) || 0), 0);
+  const totalDriverSalary = confirmedTrips.reduce((sum, trip) => sum + (Number(trip.driverSalary) || 0), 0);
   const paidTotal = monthlyDriverSalary.reduce((sum, entry) => sum + entry.paid, 0);
   const remainingTotal = Math.max(totalDriverSalary - paidTotal, 0);
 
@@ -345,6 +363,28 @@ export default function Assurance() {
               <option value="societe">Societe</option>
             </select>
           </div>
+          <div className="col-md-2">
+            <select
+              className="form-select"
+              value={form.status}
+              onChange={(e) => setForm({ ...form, status: e.target.value })}
+            >
+              {tripStatuses.map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="col-md-4">
+            <input
+              type="text"
+              className="form-control"
+              placeholder="Note"
+              value={form.note}
+              onChange={(e) => setForm({ ...form, note: e.target.value })}
+            />
+          </div>
           {form.typePayment === "societe" && (
             <>
               <div className="col-md-2">
@@ -413,6 +453,16 @@ export default function Assurance() {
               <option value="societe">Societe</option>
             </select>
           </div>
+          <div className="col-md-3">
+            <select className="form-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+              <option value="">Tous les statuts</option>
+              {tripStatuses.map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
@@ -425,7 +475,13 @@ export default function Assurance() {
         </div>
         <div className="col-md-3">
           <div className="metric-card">
-            <span className="metric-label">Benefice</span>
+            <span className="metric-label">Courses confirmees</span>
+            <strong className="metric-value">{confirmedTrips.length}</strong>
+          </div>
+        </div>
+        <div className="col-md-3">
+          <div className="metric-card">
+            <span className="metric-label">Benefice confirme</span>
             <strong className="metric-value">{formatMoney(totalCommission)}</strong>
           </div>
         </div>
@@ -508,8 +564,10 @@ export default function Assurance() {
                 <th>Destination</th>
                 <th>Prix</th>
                 <th>Type</th>
+                <th>Statut</th>
                 <th>Numero Dossier</th>
                 <th>Nom Societe</th>
+                <th>Note</th>
                 <th>Commission</th>
                 <th>Salaire Chauffeur</th>
                 <th>Actions</th>
@@ -524,10 +582,24 @@ export default function Assurance() {
                   <td>{trip.destination}</td>
                   <td>{formatMoney(trip.prix)}</td>
                   <td>{trip.typePayment}</td>
+                  <td>
+                    <span
+                      className={`badge ${
+                        isConfirmedStatus(trip.status)
+                          ? "bg-success"
+                          : trip.status === "Annule"
+                          ? "bg-danger"
+                          : "bg-warning text-dark"
+                      }`}
+                    >
+                      {trip.status || "En cours"}
+                    </span>
+                  </td>
                   <td>{trip.numeroDossier}</td>
                   <td>{trip.companyName || "-"}</td>
-                  <td>{formatMoney(trip.commission)}</td>
-                  <td>{formatMoney(trip.driverSalary)}</td>
+                  <td>{trip.note || "-"}</td>
+                  <td>{isConfirmedStatus(trip.status) ? formatMoney(trip.commission) : "-"}</td>
+                  <td>{isConfirmedStatus(trip.status) ? formatMoney(trip.driverSalary) : "-"}</td>
                   <td>
                     <button className="btn btn-warning btn-sm me-2" onClick={() => handleEditTrip(trip)}>
                       Modifier
