@@ -1,22 +1,32 @@
-// src/pages/Assurance.jsx
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  collection,
-  getDocs,
   addDoc,
-  updateDoc,
+  collection,
   deleteDoc,
   doc,
-  serverTimestamp
+  getDocs,
+  serverTimestamp,
+  updateDoc,
 } from "firebase/firestore";
 import { db } from "../firebase";
 
 const COMMISSION_RATE = 0.1;
+const PAYMENT_SOURCE = "assuranceTrips";
+
+function getMonthKey(date) {
+  const d = new Date(date);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function formatMoney(value) {
+  return `${Number(value || 0).toLocaleString("fr-FR")} DA`;
+}
 
 export default function Assurance() {
   const [drivers, setDrivers] = useState([]);
   const [trips, setTrips] = useState([]);
   const [editTripId, setEditTripId] = useState(null);
+  const [payments, setPayments] = useState([]);
 
   const [form, setForm] = useState({
     driverId: "",
@@ -29,20 +39,13 @@ export default function Assurance() {
     numeroDossier: "",
     companyName: "",
     driverSalary: "",
-    commission: ""
+    commission: "",
   });
 
   const [selectedDriverFilter, setSelectedDriverFilter] = useState("");
   const [monthFilter, setMonthFilter] = useState("");
   const [numeroDossierFilter, setNumeroDossierFilter] = useState("");
-  const [typeFilter, setTypeFilter] = useState(""); // assurance / societe
-  const [paidByMonth, setPaidByMonth] = useState({});
-  const [paidTotal, setPaidTotal] = useState(0);
-
-  const getMonthKey = (date) => {
-    const d = new Date(date);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-  };
+  const [typeFilter, setTypeFilter] = useState("");
 
   const calculateCommission = (prix, typePayment, driverSalaryInput, commissionInput) => {
     const total = parseFloat(prix) || 0;
@@ -50,59 +53,55 @@ export default function Assurance() {
       const commission = total * COMMISSION_RATE;
       const driverSalary = total - commission;
       return { commission, driverSalary };
-    } else if (typePayment === "societe") {
+    }
+
+    if (typePayment === "societe") {
       const driverSalary = parseFloat(driverSalaryInput || 0);
       const commission = parseFloat(commissionInput || 0);
       return { commission, driverSalary };
     }
+
     return { commission: 0, driverSalary: 0 };
   };
 
   const fetchDrivers = async () => {
     const snap = await getDocs(collection(db, "drivers"));
-    const data = snap.docs.map(d => ({ driverId: d.id, ...d.data() }));
+    const data = snap.docs.map((entry) => ({ driverId: entry.id, ...entry.data() }));
     setDrivers(data);
   };
 
   const fetchTrips = async () => {
     const snap = await getDocs(collection(db, "assuranceTrips"));
     const data = snap.docs
-      .map(d => ({ id: d.id, ...d.data() }))
+      .map((entry) => ({ id: entry.id, ...entry.data() }))
       .sort((a, b) => new Date(b.date) - new Date(a.date));
     setTrips(data);
   };
 
-  const fetchPayments = async (driverId) => {
+  const fetchPayments = async () => {
     const snap = await getDocs(collection(db, "driverPayments"));
-    let total = 0;
-    const map = {};
-    snap.docs.forEach(d => {
-      const p = d.data();
-      if (p.driverId === driverId && p.regle) {
-        const key = `${p.year}-${String(p.month).padStart(2, "0")}`;
-        map[key] = (map[key] || 0) + p.amount;
-        total += p.amount;
-      }
-    });
-    setPaidByMonth(map);
-    setPaidTotal(total);
+    const data = snap.docs
+      .map((entry) => entry.data())
+      .filter((payment) => payment.regle && (payment.source || "requests") === PAYMENT_SOURCE);
+    setPayments(data);
   };
 
   useEffect(() => {
     fetchDrivers();
     fetchTrips();
+    fetchPayments();
   }, []);
 
-  const handleAddOrUpdateTrip = async (e) => {
-    e.preventDefault();
+  const handleAddOrUpdateTrip = async (event) => {
+    event.preventDefault();
+
     if (!form.driverId || !form.depart || !form.destination || !form.date || !form.prix || !form.numeroDossier) {
       alert("Remplir tous les champs !");
       return;
     }
 
-    const driver = drivers.find(d => d.driverId === form.driverId);
+    const driver = drivers.find((item) => item.driverId === form.driverId);
     const driverName = driver ? `${driver.firstName} ${driver.lastName}` : "-";
-
     const { commission, driverSalary } = calculateCommission(
       form.prix,
       form.typePayment || "assurance",
@@ -112,6 +111,7 @@ export default function Assurance() {
 
     const tripData = {
       driverId: form.driverId,
+      driverName,
       depart: form.depart,
       destination: form.destination,
       date: form.date,
@@ -122,8 +122,7 @@ export default function Assurance() {
       companyName: form.companyName || "",
       driverSalary,
       commission,
-      driverName,
-      timestamp: serverTimestamp()
+      timestamp: serverTimestamp(),
     };
 
     if (editTripId) {
@@ -144,10 +143,10 @@ export default function Assurance() {
       numeroDossier: "",
       companyName: "",
       driverSalary: "",
-      commission: ""
+      commission: "",
     });
 
-    fetchTrips();
+    await fetchTrips();
   };
 
   const handleEditTrip = (trip) => {
@@ -163,267 +162,386 @@ export default function Assurance() {
       numeroDossier: trip.numeroDossier,
       companyName: trip.companyName || "",
       driverSalary: trip.driverSalary,
-      commission: trip.commission
+      commission: trip.commission,
     });
   };
 
   const handleDeleteTrip = async (id) => {
     if (!window.confirm("Voulez-vous vraiment supprimer cette course ?")) return;
     await deleteDoc(doc(db, "assuranceTrips", id));
-    fetchTrips();
+    await fetchTrips();
   };
 
-  // فلترة حسب السائق، الشهر، رقم الدوسيه، ونوع الدفع
-  const filteredTrips = trips.filter(t => {
-    const matchDriver = !selectedDriverFilter || t.driverId === selectedDriverFilter;
-    const matchMonth = !monthFilter || getMonthKey(t.date) === monthFilter;
-    const matchDossier = !numeroDossierFilter || t.numeroDossier.includes(numeroDossierFilter);
-    const matchType = !typeFilter || t.typePayment === typeFilter;
-    return matchDriver && matchMonth && matchDossier && matchType;
-  });
+  const filteredTrips = useMemo(
+    () =>
+      trips.filter((trip) => {
+        const matchDriver = !selectedDriverFilter || trip.driverId === selectedDriverFilter;
+        const matchMonth = !monthFilter || getMonthKey(trip.date) === monthFilter;
+        const matchDossier =
+          !numeroDossierFilter ||
+          String(trip.numeroDossier || "").toLowerCase().includes(numeroDossierFilter.toLowerCase());
+        const matchType = !typeFilter || trip.typePayment === typeFilter;
+        return matchDriver && matchMonth && matchDossier && matchType;
+      }),
+    [trips, selectedDriverFilter, monthFilter, numeroDossierFilter, typeFilter]
+  );
 
-  const totalCommission = filteredTrips.reduce((a, t) => a + (t.commission || 0), 0);
-  const totalDriverSalary = filteredTrips.reduce((a, t) => a + (t.driverSalary || 0), 0);
+  const monthlyDriverSalary = useMemo(() => {
+    const grouped = {};
+    const visibleDriverIds = new Set();
 
-  const monthly = {};
-  filteredTrips.forEach(t => {
-    const m = getMonthKey(t.date);
-    monthly[m] = (monthly[m] || 0) + t.driverSalary;
-  });
+    filteredTrips.forEach((trip) => {
+      const key = getMonthKey(trip.date);
+      grouped[key] = (grouped[key] || 0) + (Number(trip.driverSalary) || 0);
+      if (trip.driverId) {
+        visibleDriverIds.add(trip.driverId);
+      }
+    });
 
-  // دفع الراتب وتحديث جدول السائقين
+    const paidByMonth = {};
+    payments.forEach((payment) => {
+      if (!visibleDriverIds.has(payment.driverId)) return;
+      const month = `${payment.year}-${String(payment.month).padStart(2, "0")}`;
+      if (!grouped[month]) return;
+      paidByMonth[month] = (paidByMonth[month] || 0) + (Number(payment.amount) || 0);
+    });
+
+    return Object.entries(grouped)
+      .sort(([first], [second]) => second.localeCompare(first))
+      .map(([month, total]) => {
+        const paid = paidByMonth[month] || 0;
+        return {
+          month,
+          total,
+          paid,
+          remaining: Math.max(total - paid, 0),
+          isPaid: paid >= total && total > 0,
+        };
+      });
+  }, [filteredTrips, payments]);
+
+  const totalCommission = filteredTrips.reduce((sum, trip) => sum + (Number(trip.commission) || 0), 0);
+  const totalDriverSalary = filteredTrips.reduce((sum, trip) => sum + (Number(trip.driverSalary) || 0), 0);
+  const paidTotal = monthlyDriverSalary.reduce((sum, entry) => sum + entry.paid, 0);
+  const remainingTotal = Math.max(totalDriverSalary - paidTotal, 0);
+
   const payDriverMonth = async (month, amount) => {
-    const [year, m] = month.split("-");
-    if (!window.confirm(`Payer ${amount} DA pour ${month} ?`)) return;
+    if (!selectedDriverFilter) {
+      alert("Choisir un conducteur d'abord.");
+      return;
+    }
 
-    // إضافة الدفع
+    const amountToPay = Number(amount) || 0;
+    if (amountToPay <= 0) return;
+
+    const [year, monthNumber] = month.split("-");
+    if (!window.confirm(`Payer ${formatMoney(amountToPay)} pour ${month} ?`)) return;
+
     await addDoc(collection(db, "driverPayments"), {
       driverId: selectedDriverFilter,
-      month: m,
+      source: PAYMENT_SOURCE,
+      month: monthNumber,
       year: Number(year),
-      amount,
+      amount: amountToPay,
       regle: true,
-      paidAt: serverTimestamp()
+      paidAt: serverTimestamp(),
     });
 
-    // تحديث حقل salaryPaid في جدول السائقين
-    const driverRef = doc(db, "drivers", selectedDriverFilter);
-    const driverData = drivers.find(d => d.driverId === selectedDriverFilter);
-    await updateDoc(driverRef, {
-      salaryPaid: (driverData?.salaryPaid || 0) + amount
-    });
-
-    fetchPayments(selectedDriverFilter);
-    fetchDrivers();
+    await fetchPayments();
   };
 
   return (
-    <div className="container mt-3">
-      <h2>🚗 Assurance / Société - Gestion des courses</h2>
-
-      {/* FORM */}
-      <form className="row g-3 mb-4" onSubmit={handleAddOrUpdateTrip}>
-        <div className="col-md-3">
-          <select className="form-select"
-            value={form.driverId}
-            onChange={e => setForm({ ...form, driverId: e.target.value })}>
-            <option value="">Choisir conducteur</option>
-            {drivers.map(d => (
-              <option key={d.driverId} value={d.driverId}>
-                {d.firstName} {d.lastName}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="col-md-2">
-          <input className="form-control" placeholder="Départ"
-            value={form.depart}
-            onChange={e => setForm({ ...form, depart: e.target.value })} />
-        </div>
-        <div className="col-md-2">
-          <input className="form-control" placeholder="Destination"
-            value={form.destination}
-            onChange={e => setForm({ ...form, destination: e.target.value })} />
-        </div>
-        <div className="col-md-2">
-          <input type="date" className="form-control"
-            value={form.date}
-            onChange={e => setForm({ ...form, date: e.target.value })} />
-        </div>
-        <div className="col-md-1">
-          <input type="number" className="form-control" placeholder="Km"
-            value={form.kilometrage}
-            onChange={e => setForm({ ...form, kilometrage: e.target.value })} />
-        </div>
-        <div className="col-md-2">
-          <input type="number" className="form-control" placeholder="Prix"
-            value={form.prix}
-            onChange={e => setForm({ ...form, prix: e.target.value })} />
-        </div>
-        <div className="col-md-2">
-          <input type="text" className="form-control" placeholder="Numéro Dossier"
-            value={form.numeroDossier}
-            onChange={e => setForm({ ...form, numeroDossier: e.target.value })} />
-        </div>
-        <div className="col-md-2">
-          <input type="text" className="form-control" placeholder="Nom Société"
-            value={form.companyName}
-            onChange={e => setForm({ ...form, companyName: e.target.value })} />
-        </div>
-        <div className="col-md-2">
-          <select className="form-select"
-            value={form.typePayment}
-            onChange={e => setForm({ ...form, typePayment: e.target.value })}>
-            <option value="assurance">Assurance</option>
-            <option value="societe">Société</option>
-          </select>
-        </div>
-        {form.typePayment === "societe" && (
-          <>
-            <div className="col-md-2">
-              <input type="number" className="form-control" placeholder="Salaire Chauffeur"
-                value={form.driverSalary}
-                onChange={e => setForm({ ...form, driverSalary: e.target.value })} />
-            </div>
-            <div className="col-md-2">
-              <input type="number" className="form-control" placeholder="Votre Gain"
-                value={form.commission}
-                onChange={e => setForm({ ...form, commission: e.target.value })} />
-            </div>
-          </>
-        )}
-        <div className="col-12">
-          <button className="btn btn-primary">{editTripId ? "Enregistrer" : "Ajouter"}</button>
-        </div>
-      </form>
-
-      {/* FILTER */}
-      <div className="row mb-3">
-        <div className="col-md-3">
-          <select className="form-select"
-            value={selectedDriverFilter}
-            onChange={e => {
-              setSelectedDriverFilter(e.target.value);
-              fetchPayments(e.target.value);
-            }}>
-            <option value="">Tous les conducteurs</option>
-            {drivers.map(d => (
-              <option key={d.driverId} value={d.driverId}>{d.firstName} {d.lastName}</option>
-            ))}
-          </select>
-        </div>
-        <div className="col-md-3">
-          <input type="month" className="form-control"
-            value={monthFilter}
-            onChange={e => setMonthFilter(e.target.value)} />
-        </div>
-        <div className="col-md-3">
-          <input type="text" className="form-control" placeholder="Filtrer par numéro de dossier"
-            value={numeroDossierFilter}
-            onChange={e => setNumeroDossierFilter(e.target.value)} />
-        </div>
-        <div className="col-md-3">
-          <select className="form-select"
-            value={typeFilter}
-            onChange={e => setTypeFilter(e.target.value)}>
-            <option value="">Tous les types</option>
-            <option value="assurance">Assurance</option>
-            <option value="societe">Société</option>
-          </select>
+    <div className="page-section">
+      <div className="page-header">
+        <div>
+          <h2 className="page-title">Assurance / Societe</h2>
+          <p className="page-subtitle">Gestion des courses B2B, paiements chauffeur et suivi des dossiers.</p>
         </div>
       </div>
 
-      {/* STATS */}
-      <div className="row mb-3">
-        <div className="col-md-4">
-          <div className="card p-3 text-center">
-            <h6>💰 Votre bénéfice</h6>
-            <h4>{totalCommission} DA</h4>
+      <div className="panel-card mb-4">
+        <form className="row g-3" onSubmit={handleAddOrUpdateTrip}>
+          <div className="col-md-3">
+            <select
+              className="form-select"
+              value={form.driverId}
+              onChange={(e) => setForm({ ...form, driverId: e.target.value })}
+            >
+              <option value="">Choisir conducteur</option>
+              {drivers.map((driver) => (
+                <option key={driver.driverId} value={driver.driverId}>
+                  {driver.firstName} {driver.lastName}
+                </option>
+              ))}
+            </select>
           </div>
-        </div>
-        <div className="col-md-4">
-          <div className="card p-3 text-center bg-success text-white">
-            <h6>Payé chauffeur</h6>
-            <h4>{paidTotal} DA</h4>
+          <div className="col-md-2">
+            <input
+              className="form-control"
+              placeholder="Depart"
+              value={form.depart}
+              onChange={(e) => setForm({ ...form, depart: e.target.value })}
+            />
           </div>
-        </div>
-        <div className="col-md-4">
-          <div className="card p-3 text-center bg-danger text-white">
-            <h6>Reste à payer</h6>
-            <h4>{totalDriverSalary - paidTotal} DA</h4>
+          <div className="col-md-2">
+            <input
+              className="form-control"
+              placeholder="Destination"
+              value={form.destination}
+              onChange={(e) => setForm({ ...form, destination: e.target.value })}
+            />
+          </div>
+          <div className="col-md-2">
+            <input
+              type="date"
+              className="form-control"
+              value={form.date}
+              onChange={(e) => setForm({ ...form, date: e.target.value })}
+            />
+          </div>
+          <div className="col-md-1">
+            <input
+              type="number"
+              className="form-control"
+              placeholder="Km"
+              value={form.kilometrage}
+              onChange={(e) => setForm({ ...form, kilometrage: e.target.value })}
+            />
+          </div>
+          <div className="col-md-2">
+            <input
+              type="number"
+              className="form-control"
+              placeholder="Prix"
+              value={form.prix}
+              onChange={(e) => setForm({ ...form, prix: e.target.value })}
+            />
+          </div>
+          <div className="col-md-2">
+            <input
+              type="text"
+              className="form-control"
+              placeholder="Numero Dossier"
+              value={form.numeroDossier}
+              onChange={(e) => setForm({ ...form, numeroDossier: e.target.value })}
+            />
+          </div>
+          <div className="col-md-2">
+            <input
+              type="text"
+              className="form-control"
+              placeholder="Nom Societe"
+              value={form.companyName}
+              onChange={(e) => setForm({ ...form, companyName: e.target.value })}
+            />
+          </div>
+          <div className="col-md-2">
+            <select
+              className="form-select"
+              value={form.typePayment}
+              onChange={(e) => setForm({ ...form, typePayment: e.target.value })}
+            >
+              <option value="assurance">Assurance</option>
+              <option value="societe">Societe</option>
+            </select>
+          </div>
+          {form.typePayment === "societe" && (
+            <>
+              <div className="col-md-2">
+                <input
+                  type="number"
+                  className="form-control"
+                  placeholder="Salaire Chauffeur"
+                  value={form.driverSalary}
+                  onChange={(e) => setForm({ ...form, driverSalary: e.target.value })}
+                />
+              </div>
+              <div className="col-md-2">
+                <input
+                  type="number"
+                  className="form-control"
+                  placeholder="Votre Gain"
+                  value={form.commission}
+                  onChange={(e) => setForm({ ...form, commission: e.target.value })}
+                />
+              </div>
+            </>
+          )}
+          <div className="col-12">
+            <button className="btn btn-primary">{editTripId ? "Enregistrer" : "Ajouter"}</button>
+          </div>
+        </form>
+      </div>
+
+      <div className="panel-card mb-4">
+        <div className="row g-3">
+          <div className="col-md-3">
+            <select
+              className="form-select"
+              value={selectedDriverFilter}
+              onChange={(e) => setSelectedDriverFilter(e.target.value)}
+            >
+              <option value="">Tous les conducteurs</option>
+              {drivers.map((driver) => (
+                <option key={driver.driverId} value={driver.driverId}>
+                  {driver.firstName} {driver.lastName}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="col-md-3">
+            <input
+              type="month"
+              className="form-control"
+              value={monthFilter}
+              onChange={(e) => setMonthFilter(e.target.value)}
+            />
+          </div>
+          <div className="col-md-3">
+            <input
+              type="text"
+              className="form-control"
+              placeholder="Filtrer par numero de dossier"
+              value={numeroDossierFilter}
+              onChange={(e) => setNumeroDossierFilter(e.target.value)}
+            />
+          </div>
+          <div className="col-md-3">
+            <select className="form-select" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+              <option value="">Tous les types</option>
+              <option value="assurance">Assurance</option>
+              <option value="societe">Societe</option>
+            </select>
           </div>
         </div>
       </div>
 
-      {/* MONTH TABLE */}
-      <table className="table table-bordered">
-        <thead>
-          <tr>
-            <th>Mois</th>
-            <th>Montant</th>
-            <th>État</th>
-            <th>Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          {Object.entries(monthly).map(([month, val]) => {
-            const paid = paidByMonth[month] || 0;
-            const isPaid = paid >= val;
-            return (
-              <tr key={month}>
-                <td>{month}</td>
-                <td>{val} DA</td>
-                <td>{isPaid ? "Payé" : "Non payé"}</td>
-                <td>
-                  {!isPaid && selectedDriverFilter && (
-                    <button className="btn btn-success btn-sm"
-                      onClick={() => payDriverMonth(month, val)}>Payer</button>
-                  )}
-                </td>
+      <div className="row g-3 mb-4">
+        <div className="col-md-3">
+          <div className="metric-card">
+            <span className="metric-label">Courses filtrees</span>
+            <strong className="metric-value">{filteredTrips.length}</strong>
+          </div>
+        </div>
+        <div className="col-md-3">
+          <div className="metric-card">
+            <span className="metric-label">Benefice</span>
+            <strong className="metric-value">{formatMoney(totalCommission)}</strong>
+          </div>
+        </div>
+        <div className="col-md-3">
+          <div className="metric-card metric-card--success">
+            <span className="metric-label">Paye chauffeur</span>
+            <strong className="metric-value">{formatMoney(paidTotal)}</strong>
+          </div>
+        </div>
+        <div className="col-md-3">
+          <div className="metric-card metric-card--danger">
+            <span className="metric-label">Reste a payer</span>
+            <strong className="metric-value">{formatMoney(remainingTotal)}</strong>
+          </div>
+        </div>
+      </div>
+
+      <div className="panel-card mb-4">
+        <h5 className="section-title">Paiement chauffeur par mois</h5>
+        <div className="table-responsive">
+          <table className="table table-hover align-middle">
+            <thead>
+              <tr>
+                <th>Mois</th>
+                <th>Salaire du chauffeur</th>
+                <th>Deja paye</th>
+                <th>Reste</th>
+                <th>Etat</th>
+                <th>Action</th>
               </tr>
-            );
-          })}
-        </tbody>
-      </table>
+            </thead>
+            <tbody>
+              {monthlyDriverSalary.length === 0 ? (
+                <tr>
+                  <td colSpan="6" className="text-center text-muted py-4">
+                    Aucun mois a afficher.
+                  </td>
+                </tr>
+              ) : (
+                monthlyDriverSalary.map((entry) => (
+                  <tr key={entry.month}>
+                    <td>{entry.month}</td>
+                    <td>{formatMoney(entry.total)}</td>
+                    <td>{formatMoney(entry.paid)}</td>
+                    <td>{formatMoney(entry.remaining)}</td>
+                    <td>
+                      <span className={`badge ${entry.isPaid ? "bg-success" : "bg-warning text-dark"}`}>
+                        {entry.isPaid ? "Paye" : "Non paye"}
+                      </span>
+                    </td>
+                    <td>
+                      {!entry.isPaid && selectedDriverFilter ? (
+                        <button
+                          className="btn btn-success btn-sm"
+                          onClick={() => payDriverMonth(entry.month, entry.remaining)}
+                        >
+                          Payer le reste
+                        </button>
+                      ) : (
+                        "-"
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
-      {/* TRIPS TABLE */}
-      <table className="table table-bordered">
-        <thead>
-          <tr>
-            <th>Conducteur</th>
-            <th>Date</th>
-            <th>Départ</th>
-            <th>Destination</th>
-            <th>Prix</th>
-            <th>Type</th>
-            <th>Numéro Dossier</th>
-            <th>Nom Société</th>
-            <th>Commission / Gain</th>
-            <th>Salaire Chauffeur</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filteredTrips.map(t => (
-            <tr key={t.id}>
-              <td>{t.driverName}</td>
-              <td>{new Date(t.date).toLocaleDateString()}</td>
-              <td>{t.depart}</td>
-              <td>{t.destination}</td>
-              <td>{t.prix}</td>
-              <td>{t.typePayment}</td>
-              <td>{t.numeroDossier}</td>
-              <td>{t.companyName}</td>
-              <td>{t.commission}</td>
-              <td>{t.driverSalary}</td>
-              <td>
-                <button className="btn btn-warning btn-sm me-2" onClick={() => handleEditTrip(t)}>Modifier</button>
-                <button className="btn btn-danger btn-sm" onClick={() => handleDeleteTrip(t.id)}>Supprimer</button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div className="panel-card">
+        <h5 className="section-title">Courses B2B</h5>
+        <div className="table-responsive">
+          <table className="table table-hover align-middle">
+            <thead>
+              <tr>
+                <th>Conducteur</th>
+                <th>Date</th>
+                <th>Depart</th>
+                <th>Destination</th>
+                <th>Prix</th>
+                <th>Type</th>
+                <th>Numero Dossier</th>
+                <th>Nom Societe</th>
+                <th>Commission</th>
+                <th>Salaire Chauffeur</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredTrips.map((trip) => (
+                <tr key={trip.id}>
+                  <td>{trip.driverName}</td>
+                  <td>{new Date(trip.date).toLocaleDateString("fr-FR")}</td>
+                  <td>{trip.depart}</td>
+                  <td>{trip.destination}</td>
+                  <td>{formatMoney(trip.prix)}</td>
+                  <td>{trip.typePayment}</td>
+                  <td>{trip.numeroDossier}</td>
+                  <td>{trip.companyName || "-"}</td>
+                  <td>{formatMoney(trip.commission)}</td>
+                  <td>{formatMoney(trip.driverSalary)}</td>
+                  <td>
+                    <button className="btn btn-warning btn-sm me-2" onClick={() => handleEditTrip(trip)}>
+                      Modifier
+                    </button>
+                    <button className="btn btn-danger btn-sm" onClick={() => handleDeleteTrip(trip.id)}>
+                      Supprimer
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }

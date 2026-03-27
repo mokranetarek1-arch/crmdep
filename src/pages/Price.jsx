@@ -2,31 +2,51 @@ import { useState } from "react";
 
 export default function PriceSimulator() {
   const [km, setKm] = useState("");
-  const [accident, setAccident] = useState(false);
   const [night, setNight] = useState(false);
-  const [specialVehicle, setSpecialVehicle] = useState(false);
+  const [type, setType] = useState("depannage"); // depannage | remorquage
+  const [extra, setExtra] = useState({
+    extraction: false,
+    attente: false,
+    deplacement: false,
+    fourgon: false,
+  });
   const [price, setPrice] = useState(null);
-
-  const calculateBasePrice = (distance) => {
-    if (distance >= 1 && distance <= 5) return 2500;
-    if (distance > 5 && distance <= 20) return 4000;
-    if (distance > 20 && distance <= 30) return 5000;
-    if (distance > 30 && distance <= 50) return 6000;
-    if (distance > 50 && distance <= 70) return 8000;
-    if (distance > 70 && distance <= 100) return 10000;
-    if (distance > 100) return 12000;
-    return 0;
-  };
 
   const calculatePrice = () => {
     const distance = Number(km);
     if (!distance || distance <= 0) return;
 
-    let total = calculateBasePrice(distance);
+    let total = 0;
 
-    if (accident) total += 2000;
-    if (specialVehicle) total += 1500;
-    if (night) total = total * 1.25;
+    // 🔹 1. Forfait -30km
+    if (distance <= 30) {
+      if (type === "depannage") total = 1900;
+      else total = 2800;
+    }
+
+    // 🔹 2. 31 → 150 km
+    else if (distance <= 150) {
+      total = distance * 82;
+    }
+
+    // 🔹 3. 151 → 400 km
+    else if (distance <= 400) {
+      total = distance * 46;
+    }
+
+    // 🔹 4. +400 km
+    else {
+      total = distance * 36;
+    }
+
+    // 🔹 Extras
+    if (extra.extraction) total += 1500;
+    if (extra.attente) total += 500;
+    if (extra.deplacement) total += 1500;
+    if (extra.fourgon) total += 1200;
+
+    // 🔹 Night (25%)
+    if (night) total *= 1.25;
 
     setPrice(Math.round(total));
   };
@@ -34,7 +54,7 @@ export default function PriceSimulator() {
   return (
     <div className="max-w-md mx-auto p-6 bg-white rounded-2xl shadow">
       <h1 className="text-xl font-bold mb-4 text-center">
-        Simulateur de prix – Alger
+        Simulateur basé sur barème
       </h1>
 
       <input
@@ -45,20 +65,44 @@ export default function PriceSimulator() {
         className="w-full p-2 mb-4 border rounded"
       />
 
+      {/* Type */}
+      <select
+        onChange={(e) => setType(e.target.value)}
+        className="w-full p-2 mb-4 border rounded"
+      >
+        <option value="depannage">Dépannage</option>
+        <option value="remorquage">Remorquage</option>
+      </select>
+
+      {/* Extras */}
       <div className="space-y-2 mb-4 text-sm">
-        <label className="flex items-center gap-2">
-          <input type="checkbox" onChange={(e) => setAccident(e.target.checked)} />
-          Accident
+        <label>
+          <input type="checkbox" onChange={(e) =>
+            setExtra({...extra, extraction: e.target.checked})
+          } /> Extraction véhicule (+1500)
         </label>
 
-        <label className="flex items-center gap-2">
-          <input type="checkbox" onChange={(e) => setSpecialVehicle(e.target.checked)} />
-          Véhicule spécial
+        <label>
+          <input type="checkbox" onChange={(e) =>
+            setExtra({...extra, attente: e.target.checked})
+          } /> Heure d'attente (+500)
         </label>
 
-        <label className="flex items-center gap-2">
-          <input type="checkbox" onChange={(e) => setNight(e.target.checked)} />
-          Intervention de nuit (+25%)
+        <label>
+          <input type="checkbox" onChange={(e) =>
+            setExtra({...extra, deplacement: e.target.checked})
+          } /> Déplacement sans suite (+1500)
+        </label>
+
+        <label>
+          <input type="checkbox" onChange={(e) =>
+            setExtra({...extra, fourgon: e.target.checked})
+          } /> Fourgon (+1200)
+        </label>
+
+        <label>
+          <input type="checkbox" onChange={(e) => setNight(e.target.checked)}
+        /> Nuit (+25%)
         </label>
       </div>
 
@@ -66,17 +110,13 @@ export default function PriceSimulator() {
         onClick={calculatePrice}
         className="w-full bg-black text-white py-2 rounded-xl"
       >
-        Calculer le prix
+        Calculer
       </button>
 
       {price !== null && (
         <div className="mt-4 text-center">
-          <p className="text-sm">
-            Distance : <strong>{km} km</strong>
-          </p>
-          <p className="text-lg font-bold">
-            Prix estimé : {price} DA
-          </p>
+          <p>Distance: {km} km</p>
+          <p className="text-lg font-bold">{price} DA</p>
         </div>
       )}
     </div>
