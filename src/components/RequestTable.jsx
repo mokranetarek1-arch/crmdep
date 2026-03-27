@@ -108,6 +108,20 @@ Merci pour votre confiance`;
     }
   };
 
+  const formatCreatedAt = (row) => {
+    const created = row.createdAt?.toDate
+      ? row.createdAt.toDate()
+      : row.createdAt
+      ? new Date(row.createdAt)
+      : row.timestamp?.toDate
+      ? row.timestamp.toDate()
+      : row.updatedAt?.toDate
+      ? row.updatedAt.toDate()
+      : null;
+
+    return created ? created.toLocaleString("fr-FR") : "-";
+  };
+
   return (
     <div className="container-fluid mt-4">
       <div className="row mb-4 g-3 align-items-end">
@@ -214,6 +228,7 @@ Merci pour votre confiance`;
               <th>Panne</th>
               <th>Date</th>
               <th>Heure</th>
+              <th>Ajoute le</th>
               <th>Note</th>
               <th>Actions</th>
             </tr>
@@ -221,7 +236,7 @@ Merci pour votre confiance`;
           <tbody>
             {filteredRows.length === 0 ? (
               <tr>
-                <td colSpan="20" className="text-center text-muted py-3">
+                <td colSpan="21" className="text-center text-muted py-3">
                   Aucun trajet trouve
                 </td>
               </tr>
@@ -260,6 +275,7 @@ Merci pour votre confiance`;
                     <td>{row.panneType || "-"}</td>
                     <td>{dateObj ? dateObj.toLocaleDateString() : "-"}</td>
                     <td>{row.heure || "-"}</td>
+                    <td>{formatCreatedAt(row)}</td>
                     <td style={{ maxWidth: "150px", cursor: "pointer" }}>
                       {row.note ? (
                         <span
@@ -304,19 +320,35 @@ Merci pour votre confiance`;
 
       {selectedNote && (
         <div
-          className="modal fade show"
-          style={{ display: "block", backgroundColor: "rgba(0,0,0,0.5)" }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            backgroundColor: "rgba(15, 23, 42, 0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "20px",
+            zIndex: 1050,
+          }}
           onClick={() => setSelectedNote("")}
         >
-          <div className="modal-dialog modal-dialog-centered">
-            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-              <div className="modal-header">
-                <h5 className="modal-title">Note</h5>
-                <button className="btn-close" onClick={() => setSelectedNote("")}></button>
-              </div>
-              <div className="modal-body">
-                <p style={{ whiteSpace: "pre-wrap" }}>{selectedNote}</p>
-              </div>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: "640px",
+              background: "#fff",
+              borderRadius: "20px",
+              boxShadow: "0 24px 80px rgba(15, 23, 42, 0.22)",
+              overflow: "hidden",
+            }}
+          >
+            <div className="d-flex justify-content-between align-items-center px-4 py-3 border-bottom">
+              <h5 className="modal-title mb-0">Note</h5>
+              <button className="btn-close" onClick={() => setSelectedNote("")}></button>
+            </div>
+            <div className="px-4 py-4">
+              <p style={{ whiteSpace: "pre-wrap", marginBottom: 0, lineHeight: 1.7 }}>{selectedNote}</p>
             </div>
           </div>
         </div>

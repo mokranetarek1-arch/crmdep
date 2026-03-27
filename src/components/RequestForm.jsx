@@ -62,7 +62,7 @@ export default function RequestForm({ drivers = [], editData = null, onSave }) {
           ...form,
           driverId: form.chauffeur,
           driverName: form.driverName,
-          timestamp: serverTimestamp()
+          updatedAt: serverTimestamp()
         });
         alert("Demande mise à jour avec succès !");
       } else {
@@ -70,7 +70,8 @@ export default function RequestForm({ drivers = [], editData = null, onSave }) {
           ...form,
           driverId: form.chauffeur,
           driverName: form.driverName,
-          timestamp: serverTimestamp()
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
         });
         alert("Demande enregistrée avec succès !");
       }

@@ -59,6 +59,7 @@ export default function StoreAdmin() {
   const [savingProduct, setSavingProduct] = useState(false);
   const [uploadingMainImage, setUploadingMainImage] = useState(false);
   const [uploadingGallery, setUploadingGallery] = useState(false);
+  const [editingProductId, setEditingProductId] = useState("");
 
   useEffect(() => {
     const unsubscribeBookings = onSnapshot(collection(db, "orders"), (snapshot) => {
@@ -212,7 +213,7 @@ export default function StoreAdmin() {
         .map((item) => item.trim())
         .filter(Boolean);
 
-      await addDoc(collection(db, "products"), {
+      const payload = {
         name: productForm.name.trim(),
         price: Number(productForm.price) || 0,
         category: productForm.category.trim(),
@@ -220,16 +221,45 @@ export default function StoreAdmin() {
         imageURL: productForm.imageURL.trim(),
         imageURLs: gallery,
         description: productForm.description.trim(),
-        createdAt: serverTimestamp(),
-      });
+        updatedAt: serverTimestamp(),
+      };
 
+      if (editingProductId) {
+        await updateDoc(doc(db, "products", editingProductId), payload);
+      } else {
+        await addDoc(collection(db, "products"), {
+          ...payload,
+          createdAt: serverTimestamp(),
+        });
+      }
+
+      setEditingProductId("");
       setProductForm(initialProductForm);
     } catch (error) {
       console.error(error);
-      alert("Erreur lors de l'ajout du produit.");
+      alert("Erreur lors de l'enregistrement du produit.");
     } finally {
       setSavingProduct(false);
     }
+  };
+
+  const startEditProduct = (product) => {
+    setEditingProductId(product.id);
+    setProductForm({
+      name: product.name || "",
+      price: String(product.price ?? ""),
+      category: product.category || "",
+      stock: String(product.stock ?? ""),
+      imageURL: product.imageURL || "",
+      imageURLs: Array.isArray(product.imageURLs) ? product.imageURLs.join(", ") : "",
+      description: product.description || "",
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const cancelEditProduct = () => {
+    setEditingProductId("");
+    setProductForm(initialProductForm);
   };
 
   return (
@@ -391,8 +421,10 @@ export default function StoreAdmin() {
         <div className="col-lg-5">
           <div className="card shadow-sm border-0">
             <div className="card-body">
-              <h2 className="h4 mb-1">Ajouter un produit</h2>
-              <p className="text-muted mb-3">Ajout rapide dans la collection products.</p>
+              <h2 className="h4 mb-1">{editingProductId ? "Modifier un produit" : "Ajouter un produit"}</h2>
+              <p className="text-muted mb-3">
+                {editingProductId ? "Change photo, prix, stock et details du produit." : "Ajout rapide dans la collection products."}
+              </p>
 
               <form onSubmit={submitProduct}>
                 <div className="mb-3">
@@ -513,9 +545,16 @@ export default function StoreAdmin() {
                   />
                 </div>
 
-                <button type="submit" className="btn btn-danger mt-3 w-100" disabled={savingProduct}>
-                  {savingProduct ? "Enregistrement..." : "Ajouter au store"}
-                </button>
+                <div className="d-flex gap-2 mt-3">
+                  <button type="submit" className="btn btn-danger w-100" disabled={savingProduct}>
+                    {savingProduct ? "Enregistrement..." : editingProductId ? "Mettre a jour" : "Ajouter au store"}
+                  </button>
+                  {editingProductId ? (
+                    <button type="button" className="btn btn-outline-secondary w-100" onClick={cancelEditProduct}>
+                      Annuler
+                    </button>
+                  ) : null}
+                </div>
               </form>
             </div>
           </div>
@@ -568,6 +607,13 @@ export default function StoreAdmin() {
                             )}
                           </td>
                           <td>
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-outline-primary me-2"
+                              onClick={() => startEditProduct(product)}
+                            >
+                              Modifier
+                            </button>
                             <button
                               type="button"
                               className="btn btn-sm btn-outline-danger"
