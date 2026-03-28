@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { collection, deleteDoc, doc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
+import { logAuditAction } from "../utils/audit";
 
 const isConfirmedStatus = (value) => String(value || "").toLowerCase().includes("confirm");
 const isCancelledStatus = (value) => String(value || "").toLowerCase().includes("annul");
 
-export default function RequestTable({ onEdit }) {
+export default function RequestTable({ onEdit, currentUser, adminProfile }) {
   const [rows, setRows] = useState([]);
   const [dateFilter, setDateFilter] = useState("");
   const [dayFilter, setDayFilter] = useState("");
@@ -17,7 +18,8 @@ export default function RequestTable({ onEdit }) {
   const [sortOrder, setSortOrder] = useState("recent");
   const [pageSize, setPageSize] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
-  const [selectedNoteRowId, setSelectedNoteRowId] = useState("");
+  const [selectedNote, setSelectedNote] = useState(null);
+  const [selectedTrace, setSelectedTrace] = useState(null);
 
   const sendWhatsApp = (phone, name, depart, destination, amount) => {
     if (!phone) return alert("Numero manquant");
@@ -135,8 +137,18 @@ Merci pour votre confiance`;
     if (!window.confirm("Voulez-vous vraiment supprimer ce trajet ?")) return;
 
     try {
+      const deletedRow = rows.find((row) => row.docId === docId);
       await deleteDoc(doc(db, "requests", docId));
       setRows((prev) => prev.filter((row) => row.docId !== docId));
+      await logAuditAction({
+        currentUser,
+        adminProfile,
+        action: "delete",
+        entityType: "request",
+        entityId: docId,
+        description: `Suppression de la course CRM ${deletedRow?.id || docId}`,
+        metadata: { motif: deletedRow?.motif || "", driverId: deletedRow?.driverId || "" },
+      });
     } catch (err) {
       console.error("Delete error:", err);
       alert("Erreur lors de la suppression");
@@ -262,7 +274,6 @@ Merci pour votre confiance`;
               <th>Destination</th>
               <th>Km</th>
               <th>Wilaya</th>
-              <th>Type Client</th>
               <th>Vehicule</th>
               <th>Qte</th>
               <th>Status</th>
@@ -280,16 +291,14 @@ Merci pour votre confiance`;
           <tbody>
             {paginatedRows.length === 0 ? (
               <tr>
-                <td colSpan="21" className="text-center text-muted py-3">
+                <td colSpan="20" className="text-center text-muted py-3">
                   Aucun trajet trouve
                 </td>
               </tr>
             ) : (
-              paginatedRows.flatMap((row) => {
+              paginatedRows.map((row) => {
                 const dateObj = row.date?.toDate ? row.date.toDate() : row.date ? new Date(row.date) : null;
-                const isNoteOpen = selectedNoteRowId === row.docId;
-
-                return [
+                return (
                   <tr key={row.docId}>
                     <td>{row.source}</td>
                     <td>{row.id}</td>
@@ -299,7 +308,6 @@ Merci pour votre confiance`;
                     <td>{row.destination || "-"}</td>
                     <td>{row.kilometrage || "-"}</td>
                     <td>{row.wilaya}</td>
-                    <td>{row.typeClient || "-"}</td>
                     <td>{row.marqueVehicule || "-"}</td>
                     <td>{row.quantite}</td>
                     <td>
@@ -322,21 +330,15 @@ Merci pour votre confiance`;
                     <td>{dateObj ? dateObj.toLocaleDateString() : "-"}</td>
                     <td>{row.heure || "-"}</td>
                     <td>{formatCreatedAt(row)}</td>
-                    <td style={{ maxWidth: "150px", cursor: "pointer" }}>
+                    <td>
                       {row.note ? (
-                        <span
-                          onClick={() => setSelectedNoteRowId(isNoteOpen ? "" : row.docId)}
-                          style={{
-                            display: "inline-block",
-                            whiteSpace: "nowrap",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            maxWidth: "150px",
-                            color: "#0d6efd",
-                          }}
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-primary"
+                          onClick={() => setSelectedNote({ title: `Note CRM ${row.id || row.docId}`, body: row.note })}
                         >
-                          {row.note}
-                        </span>
+                          Voir
+                        </button>
                       ) : (
                         "-"
                       )}
@@ -344,6 +346,22 @@ Merci pour votre confiance`;
                     <td>
                       <button className="btn btn-sm btn-primary me-2" onClick={() => onEdit(row)}>
                         Modifier
+                      </button>
+                      <button
+                        className="btn btn-sm btn-outline-dark me-2"
+                        onClick={() =>
+                          setSelectedTrace({
+                            title: `Trace ${row.id || row.docId}`,
+                            createdByName: row.createdByName || "-",
+                            createdByEmail: row.createdByEmail || "-",
+                            updatedByName: row.updatedByName || "-",
+                            updatedByEmail: row.updatedByEmail || "-",
+                            createdAt: formatCreatedAt(row),
+                            updatedAt: row.updatedAt?.toDate ? row.updatedAt.toDate().toLocaleString("fr-FR") : "-",
+                          })
+                        }
+                      >
+                        Trace
                       </button>
                       <button className="btn btn-sm btn-danger me-2" onClick={() => handleDelete(row.docId)}>
                         Supprimer
@@ -357,25 +375,8 @@ Merci pour votre confiance`;
                         </button>
                       )}
                     </td>
-                  </tr>,
-                  isNoteOpen ? (
-                    <tr key={`${row.docId}-note`}>
-                      <td colSpan="21" className="bg-light">
-                        <div
-                          style={{
-                            padding: "14px 16px",
-                            borderLeft: "4px solid #0d6efd",
-                            whiteSpace: "pre-wrap",
-                            lineHeight: 1.7,
-                          }}
-                        >
-                          <strong className="d-block mb-2">Note de la course</strong>
-                          {row.note}
-                        </div>
-                      </td>
-                    </tr>
-                  ) : null,
-                ];
+                  </tr>
+                );
               })
             )}
           </tbody>
@@ -398,6 +399,48 @@ Merci pour votre confiance`;
           Suivant
         </button>
       </div>
+
+      {selectedNote ? (
+        <div className="note-modal-backdrop" onClick={() => setSelectedNote(null)}>
+          <div className="note-modal-card" onClick={(event) => event.stopPropagation()}>
+            <div className="d-flex justify-content-between align-items-start gap-3 mb-3">
+              <div>
+                <div className="note-modal-label">DETAIL</div>
+                <h5 className="mb-0">{selectedNote.title}</h5>
+              </div>
+              <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setSelectedNote(null)}>
+                Fermer
+              </button>
+            </div>
+            <div className="note-modal-body">{selectedNote.body}</div>
+          </div>
+        </div>
+      ) : null}
+
+      {selectedTrace ? (
+        <div className="note-modal-backdrop" onClick={() => setSelectedTrace(null)}>
+          <div className="note-modal-card" onClick={(event) => event.stopPropagation()}>
+            <div className="d-flex justify-content-between align-items-start gap-3 mb-3">
+              <div>
+                <div className="note-modal-label">TRACE</div>
+                <h5 className="mb-0">{selectedTrace.title}</h5>
+              </div>
+              <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setSelectedTrace(null)}>
+                Fermer
+              </button>
+            </div>
+            <div className="note-modal-body">
+              <div><strong>Ajoute par:</strong> {selectedTrace.createdByName}</div>
+              <div><strong>Email ajout:</strong> {selectedTrace.createdByEmail}</div>
+              <div><strong>Ajoute le:</strong> {selectedTrace.createdAt}</div>
+              <hr />
+              <div><strong>Modifie par:</strong> {selectedTrace.updatedByName}</div>
+              <div><strong>Email modification:</strong> {selectedTrace.updatedByEmail}</div>
+              <div><strong>Modifie le:</strong> {selectedTrace.updatedAt}</div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

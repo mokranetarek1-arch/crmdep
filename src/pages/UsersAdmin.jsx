@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { collection, onSnapshot, serverTimestamp, updateDoc, doc } from "firebase/firestore";
 import { db } from "../firebase";
 import "./UsersAdmin.css";
+import { logAuditAction } from "../utils/audit";
 
 const defaultPermissions = {
   dashboard: true,
@@ -45,6 +46,7 @@ export default function UsersAdmin({ currentUser, adminProfile }) {
   const [admins, setAdmins] = useState([]);
   const [requests, setRequests] = useState([]);
   const [products, setProducts] = useState([]);
+  const [auditLogs, setAuditLogs] = useState([]);
   const [savingUid, setSavingUid] = useState("");
 
   useEffect(() => {
@@ -65,44 +67,82 @@ export default function UsersAdmin({ currentUser, adminProfile }) {
     });
 
     const unsubscribeRequests = onSnapshot(collection(db, "requests"), (snapshot) => {
-      setRequests(snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() })));
+      setRequests(snapshot.docs.map((entry) => ({ docId: entry.id, ...entry.data() })));
     });
 
     const unsubscribeProducts = onSnapshot(collection(db, "products"), (snapshot) => {
-      setProducts(snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() })));
+      setProducts(snapshot.docs.map((entry) => ({ docId: entry.id, ...entry.data() })));
+    });
+
+    const unsubscribeAudit = onSnapshot(collection(db, "auditLogs"), (snapshot) => {
+      const logs = snapshot.docs
+        .map((entry) => ({ id: entry.id, ...entry.data() }))
+        .sort((a, b) => (readDate(b.createdAt)?.getTime() || 0) - (readDate(a.createdAt)?.getTime() || 0));
+      setAuditLogs(logs);
     });
 
     return () => {
       unsubscribeAdmins();
       unsubscribeRequests();
       unsubscribeProducts();
+      unsubscribeAudit();
     };
   }, []);
 
   const userStats = useMemo(() => {
     const statsMap = {};
+    const countedRequestCreates = new Set();
+    const countedProductCreates = new Set();
 
     admins.forEach((admin) => {
       statsMap[admin.uid] = {
         requestsCreated: 0,
         productsCreated: 0,
+        updates: 0,
+        deletes: 0,
+        payments: 0,
       };
     });
 
     requests.forEach((request) => {
-      if (request.createdByUid && statsMap[request.createdByUid]) {
+      const key = `${request.createdByUid}-${request.docId}`;
+      if (request.createdByUid && statsMap[request.createdByUid] && !countedRequestCreates.has(key)) {
         statsMap[request.createdByUid].requestsCreated += 1;
+        countedRequestCreates.add(key);
       }
     });
 
     products.forEach((product) => {
-      if (product.createdByUid && statsMap[product.createdByUid]) {
+      const key = `${product.createdByUid}-${product.docId}`;
+      if (product.createdByUid && statsMap[product.createdByUid] && !countedProductCreates.has(key)) {
         statsMap[product.createdByUid].productsCreated += 1;
+        countedProductCreates.add(key);
       }
     });
 
+    auditLogs.forEach((log) => {
+      if (!log.actorUid || !statsMap[log.actorUid]) return;
+      if (log.action === "create" && log.entityType === "request") {
+        const key = `${log.actorUid}-${log.entityId}`;
+        if (!countedRequestCreates.has(key)) {
+          statsMap[log.actorUid].requestsCreated += 1;
+          countedRequestCreates.add(key);
+        }
+      }
+      if (log.action === "create" && log.entityType === "product") {
+        const key = `${log.actorUid}-${log.entityId}`;
+        if (!countedProductCreates.has(key)) {
+          statsMap[log.actorUid].productsCreated += 1;
+          countedProductCreates.add(key);
+        }
+      }
+      if (log.action === "update") statsMap[log.actorUid].updates += 1;
+      if (log.action === "delete") statsMap[log.actorUid].deletes += 1;
+      if (String(log.action || "").includes("payment")) statsMap[log.actorUid].payments += 1;
+    });
+
     return statsMap;
-  }, [admins, requests, products]);
+  }, [admins, requests, products, auditLogs]);
 
   const updateAdminField = async (uid, updates) => {
     setSavingUid(uid);
@@ -111,6 +151,15 @@ export default function UsersAdmin({ currentUser, adminProfile }) {
       await updateDoc(doc(db, "admin", uid), {
         ...updates,
         updatedAt: serverTimestamp(),
+      });
+      await logAuditAction({
+        currentUser,
+        adminProfile,
+        action: "update",
+        entityType: "admin",
+        entityId: uid,
+        description: `Mise a jour des acces utilisateur ${uid}`,
+        metadata: updates,
       });
     } catch (error) {
       console.error(error);
@@ -212,7 +261,8 @@ export default function UsersAdmin({ currentUser, adminProfile }) {
 
           <div className="users-admin-grid">
             {activeUsers.map((admin) => {
-              const stats = userStats[admin.uid] || { requestsCreated: 0, productsCreated: 0 };
+              const stats =
+                userStats[admin.uid] || { requestsCreated: 0, productsCreated: 0, updates: 0, deletes: 0, payments: 0 };
 
               return (
                 <article key={admin.uid} className="users-admin-card">
@@ -292,10 +342,53 @@ export default function UsersAdmin({ currentUser, adminProfile }) {
                       <strong>{stats.productsCreated}</strong>
                       <span>Produits ajoutes</span>
                     </div>
+                    <div>
+                      <strong>{stats.updates}</strong>
+                      <span>Modifications</span>
+                    </div>
+                    <div>
+                      <strong>{stats.deletes}</strong>
+                      <span>Suppressions</span>
+                    </div>
+                    <div>
+                      <strong>{stats.payments}</strong>
+                      <span>Actions paiement</span>
+                    </div>
                   </div>
                 </article>
               );
             })}
+          </div>
+        </div>
+      </div>
+
+      <div className="card shadow-sm border-0 mt-4">
+        <div className="card-body">
+          <h2 className="h4 mb-1">Historique admin</h2>
+          <p className="text-muted mb-3">Qui a ajoute, modifie, supprime ou traite un paiement.</p>
+          <div className="table-responsive">
+            <table className="table align-middle">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Admin</th>
+                  <th>Action</th>
+                  <th>Type</th>
+                  <th>Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                {auditLogs.slice(0, 25).map((log) => (
+                  <tr key={log.id}>
+                    <td>{formatDate(log.createdAt)}</td>
+                    <td>{log.actorName || log.actorEmail || "-"}</td>
+                    <td>{log.action || "-"}</td>
+                    <td>{log.entityType || "-"}</td>
+                    <td>{log.description || "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>

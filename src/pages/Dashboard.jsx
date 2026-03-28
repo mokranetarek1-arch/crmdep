@@ -47,6 +47,8 @@ export default function Dashboard({ currentUser, adminProfile }) {
       <RequestTable
         key={refreshKey}
         onEdit={(row) => setEditData(row)}
+        currentUser={currentUser}
+        adminProfile={adminProfile}
       />
     </div>
   );

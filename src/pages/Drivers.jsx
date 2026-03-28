@@ -11,39 +11,9 @@ import {
   where,
 } from "firebase/firestore";
 import { db } from "../firebase";
+import { logAuditAction } from "../utils/audit";
 
 const COMMISSION_RATE = 0.1;
-const PAYMENT_SOURCE = "requests";
-
-const parseDate = (trip) => {
-  if (trip?.date?.toDate) return trip.date.toDate();
-  if (trip?.date instanceof Date) return trip.date;
-  if (typeof trip?.date === "string") {
-    const parsed = new Date(trip.date);
-    if (!Number.isNaN(parsed.getTime())) return parsed;
-  }
-  if (trip?.timestamp?.toDate) return trip.timestamp.toDate();
-  return null;
-};
-
-const formatField = (value) => {
-  if (value === null || value === undefined || value === "") return "-";
-  if (value instanceof Date) return value.toLocaleDateString("fr-FR");
-  if (value?.toDate) return value.toDate().toLocaleDateString("fr-FR");
-  if (Array.isArray(value)) return value.map((entry) => formatField(entry)).join(", ");
-  if (typeof value === "object") return "-";
-  return String(value);
-};
-
-const getMonthKey = (date) => {
-  if (!date) return null;
-  const value = date instanceof Date ? date : date.toDate ? date.toDate() : new Date(date);
-  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}`;
-};
-
-const formatMoney = (value) => `${Number(value || 0).toLocaleString("fr-FR")} DA`;
-const isConfirmedStatus = (value) => String(value || "").toLowerCase().includes("confirm");
-
 const emptyDriver = {
   firstName: "",
   lastName: "",
@@ -53,29 +23,59 @@ const emptyDriver = {
   trucks: 1,
 };
 
-export default function Drivers() {
+const isConfirmedStatus = (value) => String(value || "").toLowerCase().includes("confirm");
+const formatMoney = (value) => `${Number(value || 0).toLocaleString("fr-FR")} DA`;
+
+const parseDate = (value, fallback) => {
+  if (value?.toDate) return value.toDate();
+  if (value instanceof Date) return value;
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  if (fallback?.toDate) return fallback.toDate();
+  if (fallback instanceof Date) return fallback;
+  if (typeof fallback === "string") {
+    const parsed = new Date(fallback);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  return null;
+};
+
+const getMonthKey = (date) => {
+  if (!date) return null;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+};
+
+const formatField = (value) => {
+  if (value === null || value === undefined || value === "") return "-";
+  return String(value);
+};
+
+export default function Drivers({ currentUser, adminProfile }) {
   const [drivers, setDrivers] = useState([]);
   const [selectedDriver, setSelectedDriver] = useState(null);
   const [driverTrips, setDriverTrips] = useState([]);
   const [allTrips, setAllTrips] = useState([]);
   const [driverStats, setDriverStats] = useState({
     totalTrips: 0,
-    totalCommission: 0,
-    monthlyCommission: {},
+    totalBenefit: 0,
+    totalPayable: 0,
+    monthly: {},
   });
   const [paymentByMonth, setPaymentByMonth] = useState({});
   const [newDriver, setNewDriver] = useState(emptyDriver);
   const [editingDriverId, setEditingDriverId] = useState("");
   const [editDriverForm, setEditDriverForm] = useState(emptyDriver);
   const [monthFilter, setMonthFilter] = useState("");
+  const [tripTypeFilter, setTripTypeFilter] = useState("");
 
   const fetchDrivers = async () => {
     try {
       const snapshot = await getDocs(collection(db, "drivers"));
-      const data = snapshot.docs.map((entry) => ({ driverId: entry.id, ...entry.data() }));
-      setDrivers(data);
-    } catch (err) {
-      console.error(err);
+      setDrivers(snapshot.docs.map((entry) => ({ driverId: entry.id, ...entry.data() })));
+    } catch (error) {
+      console.error(error);
       alert("Erreur lors du chargement des conducteurs");
     }
   };
@@ -92,10 +92,19 @@ export default function Drivers() {
 
     try {
       const ref = await addDoc(collection(db, "drivers"), newDriver);
-      setDrivers((prev) => [...prev, { driverId: ref.id, ...newDriver }]);
+      setDrivers((current) => [...current, { driverId: ref.id, ...newDriver }]);
+      await logAuditAction({
+        currentUser,
+        adminProfile,
+        action: "create",
+        entityType: "driver",
+        entityId: ref.id,
+        description: `Ajout du chauffeur ${newDriver.firstName} ${newDriver.lastName}`.trim(),
+        metadata: { wilaya: newDriver.wilaya, phone: newDriver.phone || "" },
+      });
       setNewDriver(emptyDriver);
-    } catch (err) {
-      console.error(err);
+    } catch (error) {
+      console.error(error);
       alert("Erreur lors de l'ajout du conducteur");
     }
   };
@@ -116,27 +125,29 @@ export default function Drivers() {
     if (!editingDriverId) return;
 
     try {
-      await updateDoc(doc(db, "drivers", editingDriverId), {
-        ...editDriverForm,
-        trucks: Number(editDriverForm.trucks) || 1,
+      const payload = { ...editDriverForm, trucks: Number(editDriverForm.trucks) || 1 };
+      await updateDoc(doc(db, "drivers", editingDriverId), payload);
+      await logAuditAction({
+        currentUser,
+        adminProfile,
+        action: "update",
+        entityType: "driver",
+        entityId: editingDriverId,
+        description: `Modification du chauffeur ${payload.firstName} ${payload.lastName}`.trim(),
+        metadata: { wilaya: payload.wilaya, phone: payload.phone || "" },
       });
 
-      setDrivers((prev) =>
-        prev.map((driver) =>
-          driver.driverId === editingDriverId
-            ? { ...driver, ...editDriverForm, trucks: Number(editDriverForm.trucks) || 1 }
-            : driver
-        )
+      setDrivers((current) =>
+        current.map((driver) => (driver.driverId === editingDriverId ? { ...driver, ...payload } : driver))
       );
-
       if (selectedDriver?.driverId === editingDriverId) {
-        setSelectedDriver((prev) => ({ ...prev, ...editDriverForm, trucks: Number(editDriverForm.trucks) || 1 }));
+        setSelectedDriver((current) => ({ ...current, ...payload }));
       }
 
       setEditingDriverId("");
       setEditDriverForm(emptyDriver);
-    } catch (err) {
-      console.error(err);
+    } catch (error) {
+      console.error(error);
       alert("Erreur lors de la modification du conducteur");
     }
   };
@@ -150,57 +161,99 @@ export default function Drivers() {
     if (!window.confirm("Supprimer ce conducteur et ses demandes ?")) return;
 
     try {
+      const deletedDriver = drivers.find((driver) => driver.driverId === driverId);
       await deleteDoc(doc(db, "drivers", driverId));
-      const requestsQuery = query(collection(db, "requests"), where("driverId", "==", driverId));
-      const snap = await getDocs(requestsQuery);
+      const [requestsSnap, assuranceSnap] = await Promise.all([
+        getDocs(query(collection(db, "requests"), where("driverId", "==", driverId))),
+        getDocs(query(collection(db, "assuranceTrips"), where("driverId", "==", driverId))),
+      ]);
 
-      for (const trip of snap.docs) {
+      for (const trip of requestsSnap.docs) {
         await deleteDoc(doc(db, "requests", trip.id));
       }
 
-      setDrivers((prev) => prev.filter((driver) => driver.driverId !== driverId));
+      await logAuditAction({
+        currentUser,
+        adminProfile,
+        action: "delete",
+        entityType: "driver",
+        entityId: driverId,
+        description: `Suppression du chauffeur ${deletedDriver?.firstName || ""} ${deletedDriver?.lastName || ""}`.trim(),
+        metadata: {},
+      });
+      for (const trip of assuranceSnap.docs) {
+        await deleteDoc(doc(db, "assuranceTrips", trip.id));
+      }
+
+      setDrivers((current) => current.filter((driver) => driver.driverId !== driverId));
       if (selectedDriver?.driverId === driverId) {
         setSelectedDriver(null);
         setAllTrips([]);
         setDriverTrips([]);
         setPaymentByMonth({});
       }
-    } catch (err) {
-      console.error(err);
+    } catch (error) {
+      console.error(error);
       alert("Erreur lors de la suppression");
     }
   };
 
-  const fetchPaidCommissions = async (driverId) => {
-    const paymentsQuery = query(collection(db, "driverPayments"), where("driverId", "==", driverId));
-    const snap = await getDocs(paymentsQuery);
-    const paidMonthMap = {};
-
-    snap.docs.forEach((entry) => {
+  const buildPaymentByMonth = (paymentDocs) => {
+    const grouped = {};
+    paymentDocs.forEach((entry) => {
       const payment = entry.data();
-      const source = payment.source || "requests";
-      if (!payment.regle || source !== PAYMENT_SOURCE) return;
-
+      if (!payment.regle) return;
       const key = `${payment.year}-${String(payment.month).padStart(2, "0")}`;
-      paidMonthMap[key] = (paidMonthMap[key] || 0) + (Number(payment.amount) || 0);
+      grouped[key] = grouped[key] || {
+        total: 0,
+        particulier: 0,
+        assurance: 0,
+        societe: 0,
+      };
+      const tripType =
+        payment.tripType ||
+        (payment.source === "requests" ? "particulier" : payment.source === "assuranceTrips" ? "assurance" : "");
+      grouped[key].total += Number(payment.amount) || 0;
+      if (tripType && grouped[key][tripType] !== undefined) {
+        grouped[key][tripType] += Number(payment.amount) || 0;
+      }
     });
-
-    setPaymentByMonth(paidMonthMap);
+    setPaymentByMonth(grouped);
   };
 
-  const filterTripsByMonth = (trips, month) => {
-    const filtered = month ? trips.filter((trip) => getMonthKey(trip.date) === month) : trips;
+  const filterTripsByMonth = (trips, month, tripType = "") => {
+    const filtered = trips.filter((trip) => {
+      const matchMonth = month ? getMonthKey(trip.date) === month : true;
+      const matchType = tripType ? trip.tripType === tripType : true;
+      return matchMonth && matchType;
+    });
 
     const stats = filtered.reduce(
       (acc, trip) => {
         if (!trip.date) return acc;
-        acc.totalTrips += 1;
-        acc.totalCommission += trip.commission;
         const monthKey = getMonthKey(trip.date);
-        acc.monthlyCommission[monthKey] = (acc.monthlyCommission[monthKey] || 0) + trip.commission;
+        acc.totalTrips += 1;
+        acc.totalBenefit += trip.commission;
+        acc.totalPayable += trip.payableAmount;
+        acc.monthly[monthKey] = acc.monthly[monthKey] || {
+          benefit: 0,
+          payable: 0,
+          particulier: 0,
+          assurance: 0,
+          societe: 0,
+          payableParticulier: 0,
+          payableAssurance: 0,
+          payableSociete: 0,
+        };
+        acc.monthly[monthKey].benefit += trip.commission;
+        acc.monthly[monthKey].payable += trip.payableAmount;
+        acc.monthly[monthKey][trip.tripType] += trip.commission;
+        if (trip.tripType === "particulier") acc.monthly[monthKey].payableParticulier += trip.payableAmount;
+        if (trip.tripType === "assurance") acc.monthly[monthKey].payableAssurance += trip.payableAmount;
+        if (trip.tripType === "societe") acc.monthly[monthKey].payableSociete += trip.payableAmount;
         return acc;
       },
-      { totalTrips: 0, totalCommission: 0, monthlyCommission: {} }
+      { totalTrips: 0, totalBenefit: 0, totalPayable: 0, monthly: {} }
     );
 
     setDriverTrips(filtered);
@@ -210,111 +263,194 @@ export default function Drivers() {
   const fetchDriverTrips = async (driver) => {
     setSelectedDriver(driver);
 
-    const requestsQuery = query(collection(db, "requests"), where("driverId", "==", driver.driverId));
-    const snap = await getDocs(requestsQuery);
+    const [requestsSnap, assuranceSnap, paymentsSnap] = await Promise.all([
+      getDocs(query(collection(db, "requests"), where("driverId", "==", driver.driverId))),
+      getDocs(query(collection(db, "assuranceTrips"), where("driverId", "==", driver.driverId))),
+      getDocs(query(collection(db, "driverPayments"), where("driverId", "==", driver.driverId))),
+    ]);
 
-    const tripsData = snap.docs
+    const requestTrips = requestsSnap.docs
       .map((entry) => {
         const trip = entry.data();
-        const date = parseDate(trip);
+        const date = parseDate(trip.date, trip.createdAt || trip.timestamp);
         const price = Number(trip.prix) || 0;
         const commission = price * COMMISSION_RATE;
-        const km = Number(trip.kilometrage) || 0;
         return {
           id: entry.id,
-          ...trip,
+          tripType: "particulier",
+          paymentSource: "requests",
           date,
+          depart: trip.depart || "-",
+          destination: trip.destination || "-",
+          km: Number(trip.kilometrage) || 0,
           price,
-          km,
           commission,
-          status: trip.status || trip.dispatch || "En attente",
+          payableAmount: commission,
+          status: trip.status || "En cours",
+          companyName: "",
+          numeroDossier: "",
         };
       })
       .filter((trip) => isConfirmedStatus(trip.status));
 
-    setAllTrips(tripsData);
-    filterTripsByMonth(tripsData, monthFilter);
-    await fetchPaidCommissions(driver.driverId);
-  };
+    const assuranceTrips = assuranceSnap.docs
+      .map((entry) => {
+        const trip = entry.data();
+        const date = parseDate(trip.date, trip.timestamp || trip.createdAt);
+        const price = Number(trip.prix) || 0;
+        const tripType = trip.typePayment === "societe" ? "societe" : "assurance";
+        return {
+          id: entry.id,
+          tripType,
+          paymentSource: "assuranceTrips",
+          date,
+          depart: trip.depart || "-",
+          destination: trip.destination || "-",
+          km: Number(trip.kilometrage) || 0,
+          price,
+          commission: Number(trip.commission) || 0,
+          payableAmount: Number(trip.driverSalary) || 0,
+          status: trip.status || "En cours",
+          companyName: trip.companyName || "",
+          numeroDossier: trip.numeroDossier || "",
+        };
+      })
+      .filter((trip) => isConfirmedStatus(trip.status));
 
-  const payMonthCommission = async (month, amount) => {
-    if (!selectedDriver) return;
-    const amountToPay = Number(amount) || 0;
-    if (amountToPay <= 0) return;
-
-    const [yearStr, monthStr] = month.split("-");
-    if (!window.confirm(`Regler ${formatMoney(amountToPay)} pour ${month} ?`)) return;
-
-    await addDoc(collection(db, "driverPayments"), {
-      driverId: selectedDriver.driverId,
-      source: PAYMENT_SOURCE,
-      month: monthStr,
-      year: Number(yearStr),
-      amount: amountToPay,
-      regle: true,
-      paidAt: serverTimestamp(),
-    });
-
-    await fetchPaidCommissions(selectedDriver.driverId);
-  };
-
-  const undoMonthPayment = async (month) => {
-    if (!selectedDriver) return;
-    if (!window.confirm(`Annuler le paiement pour ${month} ?`)) return;
-
-    const [yearStr, monthStr] = month.split("-");
-    const paymentsQuery = query(
-      collection(db, "driverPayments"),
-      where("driverId", "==", selectedDriver.driverId),
-      where("year", "==", Number(yearStr)),
-      where("month", "==", monthStr),
-      where("regle", "==", true)
-    );
-
-    const snap = await getDocs(paymentsQuery);
-    for (const entry of snap.docs) {
-      const payment = entry.data();
-      const source = payment.source || "requests";
-      if (source === PAYMENT_SOURCE) {
-        await deleteDoc(doc(db, "driverPayments", entry.id));
-      }
-    }
-
-    await fetchPaidCommissions(selectedDriver.driverId);
+    const mergedTrips = [...requestTrips, ...assuranceTrips].sort((a, b) => (b.date?.getTime() || 0) - (a.date?.getTime() || 0));
+    setAllTrips(mergedTrips);
+    filterTripsByMonth(mergedTrips, monthFilter, tripTypeFilter);
+    buildPaymentByMonth(paymentsSnap.docs);
   };
 
   useEffect(() => {
     if (selectedDriver) {
-      filterTripsByMonth(allTrips, monthFilter);
+      filterTripsByMonth(allTrips, monthFilter, tripTypeFilter);
     }
-  }, [monthFilter, allTrips, selectedDriver]);
+  }, [monthFilter, tripTypeFilter, allTrips, selectedDriver]);
 
   const monthlyRows = useMemo(
     () =>
-      Object.entries(driverStats.monthlyCommission)
+      Object.entries(driverStats.monthly)
         .sort(([first], [second]) => second.localeCompare(first))
-        .map(([month, total]) => {
+        .map(([month, values]) => {
           const paidAmount = paymentByMonth[month] || 0;
           return {
             month,
-            total,
-            paidAmount,
-            remaining: Math.max(total - paidAmount, 0),
-            isPaid: paidAmount >= total && total > 0,
+            ...values,
+            paidAmount: paidAmount.total || 0,
+            paidParticulier: paidAmount.particulier || 0,
+            paidAssurance: paidAmount.assurance || 0,
+            paidSociete: paidAmount.societe || 0,
+            remainingParticulier: Math.max(values.payableParticulier - (paidAmount.particulier || 0), 0),
+            remainingAssurance: Math.max(values.payableAssurance - (paidAmount.assurance || 0), 0),
+            remainingSociete: Math.max(values.payableSociete - (paidAmount.societe || 0), 0),
+            remaining: Math.max(values.payable - (paidAmount.total || 0), 0),
+            isPaid: (paidAmount.total || 0) >= values.payable && values.payable > 0,
           };
         }),
-    [driverStats.monthlyCommission, paymentByMonth]
+    [driverStats.monthly, paymentByMonth]
   );
 
   const paidTotal = monthlyRows.reduce((sum, row) => sum + row.paidAmount, 0);
-  const remainingTotal = Math.max(driverStats.totalCommission - paidTotal, 0);
+  const remainingTotal = Math.max(driverStats.totalPayable - paidTotal, 0);
+  const typeTotals = useMemo(
+    () =>
+      driverTrips.reduce(
+        (acc, trip) => {
+          acc[trip.tripType] += trip.commission;
+          return acc;
+        },
+        { particulier: 0, assurance: 0, societe: 0 }
+      ),
+    [driverTrips]
+  );
+
+  const handleMonthPayment = async (month, tripType) => {
+    if (!selectedDriver) return;
+
+    const monthTrips = allTrips.filter((trip) => getMonthKey(trip.date) === month && trip.tripType === tripType);
+    if (monthTrips.length === 0) return;
+
+    const source = tripType === "particulier" ? "requests" : "assuranceTrips";
+    const actionType = tripType === "particulier" ? "collect" : "payout";
+    const amountDue = monthTrips.reduce((sum, trip) => sum + trip.payableAmount, 0);
+    const paidForType = paymentByMonth[month]?.[tripType] || 0;
+    const remaining = Math.max(amountDue - paidForType, 0);
+    if (remaining <= 0) return;
+    if (
+      !window.confirm(
+        `${tripType === "particulier" ? "Encaisser" : "Payer"} ${formatMoney(remaining)} pour ${tripType} sur ${month} ?`
+      )
+    ) {
+      return;
+    }
+
+    const [yearStr, monthStr] = month.split("-");
+    await addDoc(collection(db, "driverPayments"), {
+      driverId: selectedDriver.driverId,
+      source,
+      tripType,
+      actionType,
+      month: monthStr,
+      year: Number(yearStr),
+      amount: remaining,
+      regle: true,
+      paidAt: serverTimestamp(),
+    });
+    await logAuditAction({
+      currentUser,
+      adminProfile,
+      action: "payment",
+      entityType: "driverPayment",
+      entityId: `${selectedDriver.driverId}-${month}-${tripType}`,
+      description: `${tripType === "particulier" ? "Encaissement" : "Paiement"} ${tripType} pour ${month}`,
+      metadata: { driverId: selectedDriver.driverId, month, tripType, amount: remaining, actionType },
+    });
+
+    const paymentsSnap = await getDocs(query(collection(db, "driverPayments"), where("driverId", "==", selectedDriver.driverId)));
+    buildPaymentByMonth(paymentsSnap.docs);
+  };
+
+  const undoMonthPayment = async (month, tripType) => {
+    if (!selectedDriver) return;
+    if (!window.confirm(`Annuler l'action ${tripType} pour ${month} ?`)) return;
+
+    const [yearStr, monthStr] = month.split("-");
+    const paymentsSnap = await getDocs(
+      query(
+        collection(db, "driverPayments"),
+        where("driverId", "==", selectedDriver.driverId),
+        where("year", "==", Number(yearStr)),
+        where("month", "==", monthStr),
+        where("tripType", "==", tripType),
+        where("regle", "==", true)
+      )
+    );
+
+    for (const entry of paymentsSnap.docs) {
+      await deleteDoc(doc(db, "driverPayments", entry.id));
+    }
+    await logAuditAction({
+      currentUser,
+      adminProfile,
+      action: "payment_cancel",
+      entityType: "driverPayment",
+      entityId: `${selectedDriver.driverId}-${month}-${tripType}`,
+      description: `Annulation action ${tripType} pour ${month}`,
+      metadata: { driverId: selectedDriver.driverId, month, tripType },
+    });
+
+    const refreshedPayments = await getDocs(query(collection(db, "driverPayments"), where("driverId", "==", selectedDriver.driverId)));
+    buildPaymentByMonth(refreshedPayments.docs);
+  };
 
   return (
     <div className="page-section">
       <div className="page-header">
         <div>
           <h2 className="page-title">Conducteurs</h2>
-          <p className="page-subtitle">Suivi des commissions, paiements, soldes et edition des fiches chauffeur.</p>
+          <p className="page-subtitle">Une vue chauffeur unique pour particulier, assurance et societe.</p>
         </div>
       </div>
 
@@ -326,7 +462,7 @@ export default function Drivers() {
                 className="form-control"
                 placeholder={field}
                 value={newDriver[field]}
-                onChange={(e) => setNewDriver({ ...newDriver, [field]: e.target.value })}
+                onChange={(event) => setNewDriver({ ...newDriver, [field]: event.target.value })}
               />
             </div>
           ))}
@@ -335,7 +471,7 @@ export default function Drivers() {
               type="number"
               className="form-control"
               value={newDriver.trucks}
-              onChange={(e) => setNewDriver({ ...newDriver, trucks: Number(e.target.value) || 1 })}
+              onChange={(event) => setNewDriver({ ...newDriver, trucks: Number(event.target.value) || 1 })}
             />
           </div>
           <div className="col-md-1">
@@ -358,7 +494,7 @@ export default function Drivers() {
                         <input
                           className="form-control"
                           value={editDriverForm[field]}
-                          onChange={(e) => setEditDriverForm({ ...editDriverForm, [field]: e.target.value })}
+                          onChange={(event) => setEditDriverForm({ ...editDriverForm, [field]: event.target.value })}
                         />
                       </div>
                     ))}
@@ -367,8 +503,8 @@ export default function Drivers() {
                         type="number"
                         className="form-control"
                         value={editDriverForm.trucks}
-                        onChange={(e) =>
-                          setEditDriverForm({ ...editDriverForm, trucks: Number(e.target.value) || 1 })
+                        onChange={(event) =>
+                          setEditDriverForm({ ...editDriverForm, trucks: Number(event.target.value) || 1 })
                         }
                       />
                     </div>
@@ -410,14 +546,14 @@ export default function Drivers() {
         ))}
       </div>
 
-      {selectedDriver && (
+      {selectedDriver ? (
         <div className="mt-4">
           <div className="page-header">
             <div>
               <h3 className="page-title">
-                Solde de {formatField(selectedDriver.firstName)} {formatField(selectedDriver.lastName)}
+                Compte chauffeur {formatField(selectedDriver.firstName)} {formatField(selectedDriver.lastName)}
               </h3>
-              <p className="page-subtitle">Le reste a payer est calcule uniquement sur la periode affichee.</p>
+              <p className="page-subtitle">Les courses particulier, assurance et societe sont fusionnees dans ce compte.</p>
             </div>
             <button className="btn btn-secondary" onClick={() => setSelectedDriver(null)}>
               Retour
@@ -428,12 +564,16 @@ export default function Drivers() {
             <div className="row">
               <div className="col-md-3">
                 <label className="form-label">Filtrer par mois</label>
-                <input
-                  type="month"
-                  className="form-control"
-                  value={monthFilter}
-                  onChange={(e) => setMonthFilter(e.target.value)}
-                />
+                <input type="month" className="form-control" value={monthFilter} onChange={(event) => setMonthFilter(event.target.value)} />
+              </div>
+              <div className="col-md-3">
+                <label className="form-label">Type de course</label>
+                <select className="form-select" value={tripTypeFilter} onChange={(event) => setTripTypeFilter(event.target.value)}>
+                  <option value="">Tous</option>
+                  <option value="particulier">Particulier</option>
+                  <option value="assurance">Assurance</option>
+                  <option value="societe">Societe</option>
+                </select>
               </div>
             </div>
           </div>
@@ -441,72 +581,143 @@ export default function Drivers() {
           <div className="row g-3 mb-4">
             <div className="col-md-3">
               <div className="metric-card">
-                <span className="metric-label">Trajets confirmes</span>
+                <span className="metric-label">Courses confirmees</span>
                 <strong className="metric-value">{driverStats.totalTrips}</strong>
               </div>
             </div>
             <div className="col-md-3">
               <div className="metric-card">
-                <span className="metric-label">Commission totale</span>
-                <strong className="metric-value">{formatMoney(driverStats.totalCommission)}</strong>
+                <span className="metric-label">Benefice total</span>
+                <strong className="metric-value">{formatMoney(driverStats.totalBenefit)}</strong>
               </div>
             </div>
-            <div className="col-md-3">
+            <div className="col-md-2">
+              <div className="metric-card">
+                <span className="metric-label">Particulier</span>
+                <strong className="metric-value">{formatMoney(typeTotals.particulier)}</strong>
+              </div>
+            </div>
+            <div className="col-md-2">
+              <div className="metric-card">
+                <span className="metric-label">Assurance</span>
+                <strong className="metric-value">{formatMoney(typeTotals.assurance)}</strong>
+              </div>
+            </div>
+            <div className="col-md-2">
+              <div className="metric-card">
+                <span className="metric-label">Societe</span>
+                <strong className="metric-value">{formatMoney(typeTotals.societe)}</strong>
+              </div>
+            </div>
+            <div className="col-md-2">
               <div className="metric-card metric-card--success">
-                <span className="metric-label">Commission payee</span>
+                <span className="metric-label">Traite</span>
                 <strong className="metric-value">{formatMoney(paidTotal)}</strong>
               </div>
             </div>
-            <div className="col-md-3">
+            <div className="col-md-2">
               <div className="metric-card metric-card--danger">
-                <span className="metric-label">Solde restant</span>
+                <span className="metric-label">Reste global</span>
                 <strong className="metric-value">{formatMoney(remainingTotal)}</strong>
               </div>
             </div>
           </div>
 
           <div className="panel-card mb-4">
-            <h5 className="section-title">Commission mensuelle</h5>
+            <h5 className="section-title">Paiements par mois</h5>
             <div className="table-responsive">
               <table className="table table-hover align-middle">
                 <thead>
                   <tr>
                     <th>Mois</th>
-                    <th>Montant</th>
-                    <th>Deja paye</th>
-                    <th>Solde</th>
-                    <th>Etat</th>
-                    <th>Action</th>
+                    <th>Benefice</th>
+                    <th>Particulier</th>
+                    <th>Assurance</th>
+                    <th>Societe</th>
+                    <th>Commission payee</th>
+                    <th>Paiement assurance</th>
+                    <th>Paiement societe</th>
+                    <th>Traite</th>
+                    <th>Reste</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {monthlyRows.map((row) => (
-                    <tr key={row.month}>
-                      <td>{row.month}</td>
-                      <td>{formatMoney(row.total)}</td>
-                      <td>{formatMoney(row.paidAmount)}</td>
-                      <td>{formatMoney(row.remaining)}</td>
-                      <td>
-                        {row.isPaid ? (
-                          <span className="badge bg-success">REGLE</span>
-                        ) : (
-                          <span className="badge bg-warning text-dark">A PAYER</span>
-                        )}
-                      </td>
-                      <td className="d-flex gap-1">
-                        {!row.isPaid && (
-                          <button className="btn btn-success btn-sm" onClick={() => payMonthCommission(row.month, row.remaining)}>
-                            Regler
-                          </button>
-                        )}
-                        {row.paidAmount > 0 && (
-                          <button className="btn btn-danger btn-sm" onClick={() => undoMonthPayment(row.month)}>
-                            Annuler
-                          </button>
-                        )}
+                  {monthlyRows.length === 0 ? (
+                    <tr>
+                      <td colSpan="10" className="text-center text-muted py-4">
+                        Aucun mois a afficher.
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    monthlyRows.map((row) => (
+                      <tr key={row.month}>
+                        <td>{row.month}</td>
+                        <td>{formatMoney(row.benefit)}</td>
+                        <td>{formatMoney(row.particulier)}</td>
+                        <td>{formatMoney(row.assurance)}</td>
+                        <td>{formatMoney(row.societe)}</td>
+                        <td>
+                          {row.payableParticulier > 0 ? (
+                            <div className="form-check">
+                              <input
+                                className="form-check-input"
+                                type="checkbox"
+                                checked={row.remainingParticulier <= 0 && row.paidParticulier > 0}
+                                onChange={() =>
+                                  row.remainingParticulier > 0
+                                    ? handleMonthPayment(row.month, "particulier")
+                                    : undoMonthPayment(row.month, "particulier")
+                                }
+                              />
+                              <label className="form-check-label small">
+                                {row.remainingParticulier > 0 ? "Non payee" : "Payee"}
+                              </label>
+                            </div>
+                          ) : (
+                            "-"
+                          )}
+                        </td>
+                        <td>
+                          <div className="d-flex flex-column gap-2">
+                            <span className="small text-muted">
+                              {formatMoney(row.paidAssurance)} / {formatMoney(row.payableAssurance)}
+                            </span>
+                            {row.remainingAssurance > 0 ? (
+                              <button className="btn btn-outline-success btn-sm" onClick={() => handleMonthPayment(row.month, "assurance")}>
+                                Payer
+                              </button>
+                            ) : row.paidAssurance > 0 ? (
+                              <button className="btn btn-outline-danger btn-sm" onClick={() => undoMonthPayment(row.month, "assurance")}>
+                                Annuler
+                              </button>
+                            ) : (
+                              "-"
+                            )}
+                          </div>
+                        </td>
+                        <td>
+                          <div className="d-flex flex-column gap-2">
+                            <span className="small text-muted">
+                              {formatMoney(row.paidSociete)} / {formatMoney(row.payableSociete)}
+                            </span>
+                            {row.remainingSociete > 0 ? (
+                              <button className="btn btn-outline-dark btn-sm" onClick={() => handleMonthPayment(row.month, "societe")}>
+                                Payer
+                              </button>
+                            ) : row.paidSociete > 0 ? (
+                              <button className="btn btn-outline-danger btn-sm" onClick={() => undoMonthPayment(row.month, "societe")}>
+                                Annuler
+                              </button>
+                            ) : (
+                              "-"
+                            )}
+                          </div>
+                        </td>
+                        <td>{formatMoney(row.paidAmount)}</td>
+                        <td>{formatMoney(row.remaining)}</td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -519,22 +730,38 @@ export default function Drivers() {
                 <thead>
                   <tr>
                     <th>Date</th>
+                    <th>Type</th>
                     <th>Depart</th>
                     <th>Destination</th>
                     <th>Km</th>
                     <th>Prix</th>
-                    <th>Commission</th>
+                    <th>Benefice</th>
+                    <th>Dossier / Societe</th>
                   </tr>
                 </thead>
                 <tbody>
                   {driverTrips.map((trip) => (
-                    <tr key={trip.id}>
-                      <td>{formatField(trip.date)}</td>
-                      <td>{formatField(trip.depart)}</td>
-                      <td>{formatField(trip.destination)}</td>
+                    <tr key={`${trip.tripType}-${trip.id}`}>
+                      <td>{trip.date ? trip.date.toLocaleDateString("fr-FR") : "-"}</td>
+                      <td>
+                        <span
+                          className={`badge ${
+                            trip.tripType === "particulier"
+                              ? "bg-primary"
+                              : trip.tripType === "assurance"
+                              ? "bg-success"
+                              : "bg-dark"
+                          }`}
+                        >
+                          {trip.tripType}
+                        </span>
+                      </td>
+                      <td>{trip.depart}</td>
+                      <td>{trip.destination}</td>
                       <td>{trip.km}</td>
                       <td>{formatMoney(trip.price)}</td>
                       <td>{formatMoney(trip.commission)}</td>
+                      <td>{trip.companyName || trip.numeroDossier || "-"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -542,7 +769,7 @@ export default function Drivers() {
             </div>
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

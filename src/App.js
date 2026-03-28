@@ -221,9 +221,9 @@ function App() {
       case "trips":
         return <TripsDashboard />;
       case "drivers":
-        return <Drivers />;
+        return <Drivers currentUser={currentUser} adminProfile={adminProfile} />;
       case "assurance":
-        return <Assurance />;
+        return <Assurance currentUser={currentUser} adminProfile={adminProfile} />;
       case "store":
         return <StoreAdmin currentUser={currentUser} adminProfile={adminProfile} />;
       case "usersAdmin":

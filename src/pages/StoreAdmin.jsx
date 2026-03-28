@@ -10,6 +10,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebase";
 import "./StoreAdmin.css";
+import { logAuditAction } from "../utils/audit";
 
 const reservationStatuses = ["Pending", "Confirmed", "In Progress", "Completed", "Cancelled"];
 const orderStatuses = ["pending", "confirmed", "preparing", "shipped", "delivered", "cancelled"];
@@ -97,6 +98,15 @@ export default function StoreAdmin({ currentUser, adminProfile }) {
   const updateBookingStatus = async (id, status) => {
     try {
       await updateDoc(doc(db, "orders", id), { status });
+      await logAuditAction({
+        currentUser,
+        adminProfile,
+        action: "update",
+        entityType: "booking",
+        entityId: id,
+        description: `Changement de statut reservation vers ${status}`,
+        metadata: { status },
+      });
     } catch (error) {
       console.error(error);
       alert("Erreur lors de la mise a jour de la reservation.");
@@ -106,6 +116,15 @@ export default function StoreAdmin({ currentUser, adminProfile }) {
   const updateProductOrderStatus = async (id, status) => {
     try {
       await updateDoc(doc(db, "product_orders", id), { status });
+      await logAuditAction({
+        currentUser,
+        adminProfile,
+        action: "update",
+        entityType: "productOrder",
+        entityId: id,
+        description: `Changement de statut commande produit vers ${status}`,
+        metadata: { status },
+      });
     } catch (error) {
       console.error(error);
       alert("Erreur lors de la mise a jour de la commande.");
@@ -117,6 +136,15 @@ export default function StoreAdmin({ currentUser, adminProfile }) {
 
     try {
       await deleteDoc(doc(db, collectionName, id));
+      await logAuditAction({
+        currentUser,
+        adminProfile,
+        action: "delete",
+        entityType: collectionName,
+        entityId: id,
+        description: `Suppression ${label}`,
+        metadata: {},
+      });
     } catch (error) {
       console.error(error);
       alert("Erreur lors de la suppression.");
@@ -229,13 +257,31 @@ export default function StoreAdmin({ currentUser, adminProfile }) {
 
       if (editingProductId) {
         await updateDoc(doc(db, "products", editingProductId), payload);
+        await logAuditAction({
+          currentUser,
+          adminProfile,
+          action: "update",
+          entityType: "product",
+          entityId: editingProductId,
+          description: `Modification du produit ${payload.name}`,
+          metadata: { price: payload.price, stock: payload.stock },
+        });
       } else {
-        await addDoc(collection(db, "products"), {
+        const docRef = await addDoc(collection(db, "products"), {
           ...payload,
           createdByUid: currentUser?.uid || "",
           createdByEmail: currentUser?.email || "",
           createdByName: adminProfile?.displayName || currentUser?.displayName || "",
           createdAt: serverTimestamp(),
+        });
+        await logAuditAction({
+          currentUser,
+          adminProfile,
+          action: "create",
+          entityType: "product",
+          entityId: docRef.id,
+          description: `Ajout du produit ${payload.name}`,
+          metadata: { price: payload.price, stock: payload.stock },
         });
       }
 

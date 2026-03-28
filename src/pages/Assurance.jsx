@@ -9,6 +9,7 @@ import {
   updateDoc,
 } from "firebase/firestore";
 import { db } from "../firebase";
+import { logAuditAction } from "../utils/audit";
 
 const COMMISSION_RATE = 0.1;
 const PAYMENT_SOURCE = "assuranceTrips";
@@ -23,11 +24,13 @@ function formatMoney(value) {
   return `${Number(value || 0).toLocaleString("fr-FR")} DA`;
 }
 
-export default function Assurance() {
+export default function Assurance({ currentUser, adminProfile }) {
   const [drivers, setDrivers] = useState([]);
   const [trips, setTrips] = useState([]);
   const [editTripId, setEditTripId] = useState(null);
   const [payments, setPayments] = useState([]);
+  const [selectedNote, setSelectedNote] = useState(null);
+  const [selectedTrace, setSelectedTrace] = useState(null);
 
   const [form, setForm] = useState({
     driverId: "",
@@ -130,14 +133,41 @@ export default function Assurance() {
       note: form.note || "",
       driverSalary,
       commission,
+      updatedByUid: currentUser?.uid || "",
+      updatedByEmail: currentUser?.email || "",
+      updatedByName: adminProfile?.displayName || currentUser?.displayName || "",
+      updatedAt: serverTimestamp(),
       timestamp: serverTimestamp(),
     };
 
     if (editTripId) {
       await updateDoc(doc(db, "assuranceTrips", editTripId), tripData);
+      await logAuditAction({
+        currentUser,
+        adminProfile,
+        action: "update",
+        entityType: "assuranceTrip",
+        entityId: editTripId,
+        description: `Modification d'une course ${form.typePayment} ${form.numeroDossier}`,
+        metadata: { typePayment: form.typePayment, status: form.status, driverId: form.driverId },
+      });
       setEditTripId(null);
     } else {
-      await addDoc(collection(db, "assuranceTrips"), tripData);
+      const docRef = await addDoc(collection(db, "assuranceTrips"), tripData);
+      await updateDoc(doc(db, "assuranceTrips", docRef.id), {
+        createdByUid: currentUser?.uid || "",
+        createdByEmail: currentUser?.email || "",
+        createdByName: adminProfile?.displayName || currentUser?.displayName || "",
+      });
+      await logAuditAction({
+        currentUser,
+        adminProfile,
+        action: "create",
+        entityType: "assuranceTrip",
+        entityId: docRef.id,
+        description: `Ajout d'une course ${form.typePayment} ${form.numeroDossier}`,
+        metadata: { typePayment: form.typePayment, status: form.status, driverId: form.driverId },
+      });
     }
 
     setForm({
@@ -180,7 +210,17 @@ export default function Assurance() {
 
   const handleDeleteTrip = async (id) => {
     if (!window.confirm("Voulez-vous vraiment supprimer cette course ?")) return;
+    const deletedTrip = trips.find((trip) => trip.id === id);
     await deleteDoc(doc(db, "assuranceTrips", id));
+    await logAuditAction({
+      currentUser,
+      adminProfile,
+      action: "delete",
+      entityType: "assuranceTrip",
+      entityId: id,
+      description: `Suppression d'une course ${deletedTrip?.typePayment || "assurance"} ${deletedTrip?.numeroDossier || id}`,
+      metadata: { typePayment: deletedTrip?.typePayment || "", driverId: deletedTrip?.driverId || "" },
+    });
     await fetchTrips();
   };
 
@@ -258,11 +298,22 @@ export default function Assurance() {
     await addDoc(collection(db, "driverPayments"), {
       driverId: selectedDriverFilter,
       source: PAYMENT_SOURCE,
+      tripType: typeFilter || "assurance",
+      actionType: "payout",
       month: monthNumber,
       year: Number(year),
       amount: amountToPay,
       regle: true,
       paidAt: serverTimestamp(),
+    });
+    await logAuditAction({
+      currentUser,
+      adminProfile,
+      action: "payment",
+      entityType: "driverPayment",
+      entityId: `${selectedDriverFilter}-${month}-${typeFilter || "assurance"}`,
+      description: `Paiement chauffeur ${typeFilter || "assurance"} pour ${month}`,
+      metadata: { driverId: selectedDriverFilter, month, tripType: typeFilter || "assurance", amount: amountToPay },
     });
 
     await fetchPayments();
@@ -597,10 +648,38 @@ export default function Assurance() {
                   </td>
                   <td>{trip.numeroDossier}</td>
                   <td>{trip.companyName || "-"}</td>
-                  <td>{trip.note || "-"}</td>
+                  <td>
+                    {trip.note ? (
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-outline-primary"
+                        onClick={() => setSelectedNote({ title: `Note ${trip.numeroDossier || trip.id}`, body: trip.note })}
+                      >
+                        Voir
+                      </button>
+                    ) : (
+                      "-"
+                    )}
+                  </td>
                   <td>{isConfirmedStatus(trip.status) ? formatMoney(trip.commission) : "-"}</td>
                   <td>{isConfirmedStatus(trip.status) ? formatMoney(trip.driverSalary) : "-"}</td>
                   <td>
+                    <button
+                      type="button"
+                      className="btn btn-outline-dark btn-sm me-2"
+                      onClick={() =>
+                        setSelectedTrace({
+                          title: `Trace ${trip.numeroDossier || trip.id}`,
+                          createdByName: trip.createdByName || "-",
+                          createdByEmail: trip.createdByEmail || "-",
+                          updatedByName: trip.updatedByName || "-",
+                          updatedByEmail: trip.updatedByEmail || "-",
+                          updatedAt: trip.updatedAt?.toDate ? trip.updatedAt.toDate().toLocaleString("fr-FR") : "-",
+                        })
+                      }
+                    >
+                      Trace
+                    </button>
                     <button className="btn btn-warning btn-sm me-2" onClick={() => handleEditTrip(trip)}>
                       Modifier
                     </button>
@@ -614,6 +693,47 @@ export default function Assurance() {
           </table>
         </div>
       </div>
+
+      {selectedNote ? (
+        <div className="note-modal-backdrop" onClick={() => setSelectedNote(null)}>
+          <div className="note-modal-card" onClick={(event) => event.stopPropagation()}>
+            <div className="d-flex justify-content-between align-items-start gap-3 mb-3">
+              <div>
+                <div className="note-modal-label">DETAIL</div>
+                <h5 className="mb-0">{selectedNote.title}</h5>
+              </div>
+              <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setSelectedNote(null)}>
+                Fermer
+              </button>
+            </div>
+            <div className="note-modal-body">{selectedNote.body}</div>
+          </div>
+        </div>
+      ) : null}
+
+      {selectedTrace ? (
+        <div className="note-modal-backdrop" onClick={() => setSelectedTrace(null)}>
+          <div className="note-modal-card" onClick={(event) => event.stopPropagation()}>
+            <div className="d-flex justify-content-between align-items-start gap-3 mb-3">
+              <div>
+                <div className="note-modal-label">TRACE</div>
+                <h5 className="mb-0">{selectedTrace.title}</h5>
+              </div>
+              <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setSelectedTrace(null)}>
+                Fermer
+              </button>
+            </div>
+            <div className="note-modal-body">
+              <div><strong>Ajoute par:</strong> {selectedTrace.createdByName}</div>
+              <div><strong>Email ajout:</strong> {selectedTrace.createdByEmail}</div>
+              <hr />
+              <div><strong>Modifie par:</strong> {selectedTrace.updatedByName}</div>
+              <div><strong>Email modification:</strong> {selectedTrace.updatedByEmail}</div>
+              <div><strong>Modifie le:</strong> {selectedTrace.updatedAt}</div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

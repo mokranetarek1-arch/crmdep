@@ -1,316 +1,312 @@
-import { useState, useEffect } from "react";
-import { addDoc, collection, serverTimestamp, doc, updateDoc } from "firebase/firestore";
+import { useEffect, useState } from "react";
+import { addDoc, collection, doc, serverTimestamp, updateDoc } from "firebase/firestore";
 import { db } from "../firebase";
+import { logAuditAction } from "../utils/audit";
+
+const defaultForm = {
+  source: "Appel",
+  id: "client",
+  motif: "course immediate",
+  phone: "",
+  depart: "",
+  destination: "",
+  kilometrage: "",
+  wilaya: "Alger",
+  marqueVehicule: "",
+  quantite: 1,
+  status: "En cours",
+  chauffeur: "",
+  driverName: "",
+  prix: "",
+  panneType: "Panne",
+  date: "",
+  heure: "",
+  note: "",
+};
+
+const confirmedStatuses = ["Confirme", "Confirmé"];
 
 export default function RequestForm({ drivers = [], editData = null, onSave, currentUser, adminProfile }) {
-  const defaultForm = {
-    source: "Appel",
-    id: "client",
-    motif: "course immediate",
-    phone: "",
-    depart: "",
-    destination: "",
-    kilometrage: "",
-    wilaya: "Alger",
-    typeClient: "Client",
-    marqueVehicule: "",
-    quantite: 1,
-    status: "Confirmé",
-    chauffeur: "",
-    driverName: "",
-    prix: "",
-    panneType: "Panne",
-    date: "",
-    heure: "",
-    note: ""
-  };
-
   const [form, setForm] = useState(defaultForm);
   const [isInfoMotif, setIsInfoMotif] = useState(false);
 
-  // ملء الفورم عند التعديل
   useEffect(() => {
-    if (editData) {
-      setForm({
-        ...editData,
-        chauffeur: editData.driverId || "",
-        driverName: editData.driverName || "",
-        phone: editData.phone || ""
-      });
-      setIsInfoMotif(editData.motif === "demande d'information");
-    }
-  }, [editData]);
-
-  // مراقبة تغيّر Motif
-  useEffect(() => {
-    setIsInfoMotif(form.motif === "demande d'information");
-  }, [form.motif]);
-
-  const submit = async (e) => {
-    e.preventDefault();
-
-    // إذا كان Motif != demande d'information، نجعل اختيار السائق إلزامياً
-    if (!isInfoMotif && form.status === "Confirmé" && !form.chauffeur) {
-      alert("Veuillez sélectionner un chauffeur !");
+    if (!editData) {
+      setForm(defaultForm);
       return;
     }
 
+    setForm({
+      ...defaultForm,
+      ...editData,
+      chauffeur: editData.driverId || "",
+      driverName: editData.driverName || "",
+      phone: editData.phone || "",
+      status: editData.status || "En cours",
+    });
+  }, [editData]);
+
+  useEffect(() => {
+    const infoRequest = form.motif === "demande d'information";
+    setIsInfoMotif(infoRequest);
+
+    if (!infoRequest) return;
+
+    setForm((current) => {
+      if (current.status === "En cours" && !current.chauffeur && !current.driverName) {
+        return current;
+      }
+
+      return {
+        ...current,
+        status: "En cours",
+        chauffeur: "",
+        driverName: "",
+      };
+    });
+  }, [form.motif]);
+
+  const updateField = (name, value) => {
+    setForm((current) => ({ ...current, [name]: value }));
+  };
+
+  const resetForm = () => {
+    setForm(defaultForm);
+  };
+
+  const submit = async (event) => {
+    event.preventDefault();
+
+    const isConfirmed = confirmedStatuses.includes(form.status);
+    if (!isInfoMotif && isConfirmed && !form.chauffeur) {
+      alert("Veuillez selectionner un chauffeur.");
+      return;
+    }
+
+    const payload = {
+      ...form,
+      status: isInfoMotif ? "En cours" : form.status,
+      driverId: isInfoMotif ? "" : form.chauffeur,
+      driverName: isInfoMotif ? "" : form.driverName,
+    };
+
     try {
-      if (editData && editData.docId) {
-        const docRef = doc(db, "requests", editData.docId);
-        await updateDoc(docRef, {
-          ...form,
-          driverId: form.chauffeur,
-          driverName: form.driverName,
+      if (editData?.docId) {
+        await updateDoc(doc(db, "requests", editData.docId), {
+          ...payload,
           updatedByUid: currentUser?.uid || "",
           updatedByEmail: currentUser?.email || "",
           updatedByName: adminProfile?.displayName || currentUser?.displayName || "",
-          updatedAt: serverTimestamp()
+          updatedAt: serverTimestamp(),
         });
-        alert("Demande mise à jour avec succès !");
+        await logAuditAction({
+          currentUser,
+          adminProfile,
+          action: "update",
+          entityType: "request",
+          entityId: editData.docId,
+          description: `Modification de la course CRM ${payload.id || editData.docId}`,
+          metadata: { motif: payload.motif, status: payload.status, driverId: payload.driverId || "" },
+        });
+        alert("Demande mise a jour avec succes.");
       } else {
-        await addDoc(collection(db, "requests"), {
-          ...form,
-          driverId: form.chauffeur,
-          driverName: form.driverName,
+        const docRef = await addDoc(collection(db, "requests"), {
+          ...payload,
           createdByUid: currentUser?.uid || "",
           createdByEmail: currentUser?.email || "",
           createdByName: adminProfile?.displayName || currentUser?.displayName || "",
           createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
+          updatedAt: serverTimestamp(),
         });
-        alert("Demande enregistrée avec succès !");
+        await logAuditAction({
+          currentUser,
+          adminProfile,
+          action: "create",
+          entityType: "request",
+          entityId: docRef.id,
+          description: `Ajout d'une course CRM ${payload.id || docRef.id}`,
+          metadata: { motif: payload.motif, status: payload.status, driverId: payload.driverId || "" },
+        });
+        alert("Demande enregistree avec succes.");
       }
 
-      setForm(defaultForm);
+      resetForm();
       onSave && onSave();
     } catch (error) {
       console.error("Erreur:", error);
-      alert("Erreur, réessayez !");
+      alert("Erreur, reessayez.");
     }
   };
 
   const cancelEdit = () => {
-    setForm(defaultForm);
+    resetForm();
     onSave && onSave();
   };
 
   return (
     <div className="container mt-3">
       <div className="card shadow-sm">
-        <div className="card-header fw-bold">
-          {editData ? "Modifier demande" : "Nouvelle demande"}
-        </div>
+        <div className="card-header fw-bold">{editData ? "Modifier demande" : "Nouvelle demande"}</div>
         <div className="card-body">
           <form onSubmit={submit} className="row g-3">
-
-            {/* Source */}
             <div className="col-md-4">
               <label className="form-label">Source</label>
-              <select className="form-select"
-                value={form.source}
-                onChange={e => setForm({ ...form, source: e.target.value })}
-              >
+              <select className="form-select" value={form.source} onChange={(event) => updateField("source", event.target.value)}>
                 <option>Appel</option>
                 <option>Plateforme</option>
                 <option>Reseaux sociaux</option>
               </select>
             </div>
 
-            {/* ID */}
             <div className="col-md-4">
               <label className="form-label">ID</label>
-              <select className="form-select"
-                value={form.id}
-                onChange={e => setForm({ ...form, id: e.target.value })}
-              >
+              <select className="form-select" value={form.id} onChange={(event) => updateField("id", event.target.value)}>
                 <option value="client">Client</option>
                 <option value="partenaire">Partenaire</option>
-                <option value="société">Société</option>
+                <option value="societe">Societe</option>
               </select>
             </div>
 
-            {/* Motif */}
             <div className="col-md-4">
               <label className="form-label">Motif d'appel</label>
-              <select className="form-select"
-                value={form.motif}
-                onChange={e => setForm({ ...form, motif: e.target.value })}
-              >
-                <option value="course immediate">Course immédiate</option>
-                <option value="reservation">Réservation</option>
+              <select className="form-select" value={form.motif} onChange={(event) => updateField("motif", event.target.value)}>
+                <option value="course immediate">Course immediate</option>
+                <option value="reservation">Reservation</option>
                 <option value="demande d'information">Demande d'information</option>
               </select>
             </div>
 
-            {/* Phone */}
             <div className="col-md-4">
-              <label className="form-label">Numéro de téléphone</label>
-              <input type="text" className="form-control"
+              <label className="form-label">Numero de telephone</label>
+              <input
+                type="text"
+                className="form-control"
                 value={form.phone}
-                onChange={e => setForm({ ...form, phone: e.target.value })}
+                onChange={(event) => updateField("phone", event.target.value)}
                 placeholder="Ex: 0551120023"
               />
             </div>
 
-            {/* الحقول الخاصة بالرحلة + Marque véhicule */}
-            {!isInfoMotif && (
+            {!isInfoMotif ? (
               <>
                 <div className="col-md-6">
-                  <label className="form-label">Départ</label>
-                  <input className="form-control"
-                    value={form.depart}
-                    onChange={e => setForm({ ...form, depart: e.target.value })}
-                  />
+                  <label className="form-label">Depart</label>
+                  <input className="form-control" value={form.depart} onChange={(event) => updateField("depart", event.target.value)} />
                 </div>
                 <div className="col-md-6">
                   <label className="form-label">Destination</label>
-                  <input className="form-control"
+                  <input
+                    className="form-control"
                     value={form.destination}
-                    onChange={e => setForm({ ...form, destination: e.target.value })}
+                    onChange={(event) => updateField("destination", event.target.value)}
                   />
                 </div>
                 <div className="col-md-2">
-                  <label className="form-label">Quantité</label>
-                  <input type="number" className="form-control"
+                  <label className="form-label">Quantite</label>
+                  <input
+                    type="number"
+                    className="form-control"
                     value={form.quantite}
-                    onChange={e => setForm({ ...form, quantite: e.target.value })}
+                    onChange={(event) => updateField("quantite", event.target.value)}
                   />
                 </div>
                 <div className="col-md-4">
                   <label className="form-label">Status</label>
-                  <select className="form-select"
-                    value={form.status}
-                    onChange={e => setForm({ ...form, status: e.target.value })}
-                  >
+                  <select className="form-select" value={form.status} onChange={(event) => updateField("status", event.target.value)}>
                     <option>En cours</option>
-                    <option>Confirmé</option>
-                    <option>Annulé</option>
+                    <option>Confirme</option>
+                    <option>Annule</option>
                   </select>
                 </div>
-                <div className="col-md-4">
-                  <label className="form-label">Kilométrage</label>
-                  <input type="number" className="form-control"
+                <div className="col-md-3">
+                  <label className="form-label">Kilometrage</label>
+                  <input
+                    type="number"
+                    className="form-control"
                     value={form.kilometrage}
-                    onChange={e => setForm({ ...form, kilometrage: e.target.value })}
+                    onChange={(event) => updateField("kilometrage", event.target.value)}
                   />
                 </div>
-                <div className="col-md-4">
+                <div className="col-md-3">
                   <label className="form-label">Prix (DA)</label>
-                  <input type="number" className="form-control"
-                    value={form.prix}
-                    onChange={e => setForm({ ...form, prix: e.target.value })}
-                  />
+                  <input type="number" className="form-control" value={form.prix} onChange={(event) => updateField("prix", event.target.value)} />
                 </div>
                 <div className="col-md-4">
                   <label className="form-label">Chauffeur</label>
-                  <select className="form-select"
+                  <select
+                    className="form-select"
                     value={form.chauffeur}
-                    onChange={e => {
-                      const selected = drivers.find(d => d.driverId === e.target.value);
-                      setForm({
-                        ...form,
+                    onChange={(event) => {
+                      const selected = drivers.find((driver) => driver.driverId === event.target.value);
+                      setForm((current) => ({
+                        ...current,
                         chauffeur: selected?.driverId || "",
-                        driverName: selected ? `${selected.firstName} ${selected.lastName}` : ""
-                      });
+                        driverName: selected ? `${selected.firstName} ${selected.lastName}` : "",
+                      }));
                     }}
                   >
                     <option value="">-- Choisir un chauffeur --</option>
-                    {drivers.map(d => (
-                      <option key={d.driverId} value={d.driverId}>
-                        {d.firstName} {d.lastName}
+                    {drivers.map((driver) => (
+                      <option key={driver.driverId} value={driver.driverId}>
+                        {driver.firstName} {driver.lastName}
                       </option>
                     ))}
                   </select>
                 </div>
                 <div className="col-md-4">
                   <label className="form-label">Type de panne</label>
-                  <select className="form-select"
-                    value={form.panneType}
-                    onChange={e => setForm({ ...form, panneType: e.target.value })}
-                  >
+                  <select className="form-select" value={form.panneType} onChange={(event) => updateField("panneType", event.target.value)}>
                     <option>Panne generale</option>
-                    <option>Déplacement</option>
-                    <option>Crevation roue</option>
+                    <option>Deplacement</option>
+                    <option>Crevaison roue</option>
                     <option>Boite de vitesse</option>
                     <option>Accident</option>
-                    <option>Battrie</option>
-                    
+                    <option>Batterie</option>
                   </select>
                 </div>
-
-                {/* Marque véhicule */}
                 <div className="col-md-4">
-                  <label className="form-label">Marque véhicule</label>
-                  <input className="form-control"
+                  <label className="form-label">Marque vehicule</label>
+                  <input
+                    className="form-control"
                     value={form.marqueVehicule}
-                    onChange={e => setForm({ ...form, marqueVehicule: e.target.value })}
+                    onChange={(event) => updateField("marqueVehicule", event.target.value)}
                   />
                 </div>
               </>
-            )}
+            ) : null}
 
-            {/* Wilaya */}
             <div className="col-md-4">
               <label className="form-label">Wilaya</label>
-              <input className="form-control"
-                value={form.wilaya}
-                onChange={e => setForm({ ...form, wilaya: e.target.value })}
-              />
+              <input className="form-control" value={form.wilaya} onChange={(event) => updateField("wilaya", event.target.value)} />
             </div>
 
-            {/* Type client */}
             <div className="col-md-4">
-              <label className="form-label">Type client</label>
-              <select className="form-select"
-                value={form.typeClient}
-                onChange={e => setForm({ ...form, typeClient: e.target.value })}
-              >
-                <option>B2C</option>
-                <option>B2B</option>
-              </select>
-            </div>
-
-            {/* Date & Heure */}
-            <div className="col-md-2">
               <label className="form-label">Date</label>
-              <input type="date" className="form-control"
-                value={form.date}
-                onChange={e => setForm({ ...form, date: e.target.value })}
-              />
+              <input type="date" className="form-control" value={form.date} onChange={(event) => updateField("date", event.target.value)} />
             </div>
-            <div className="col-md-2">
+            <div className="col-md-4">
               <label className="form-label">Heure</label>
-              <input type="time" className="form-control"
-                value={form.heure}
-                onChange={e => setForm({ ...form, heure: e.target.value })}
-              />
+              <input type="time" className="form-control" value={form.heure} onChange={(event) => updateField("heure", event.target.value)} />
             </div>
 
-            {/* Note */}
             <div className="col-12">
               <label className="form-label">Note</label>
-              <input className="form-control"
-                value={form.note}
-                onChange={e => setForm({ ...form, note: e.target.value })}
-              />
+              <input className="form-control" value={form.note} onChange={(event) => updateField("note", event.target.value)} />
             </div>
 
-            {/* أزرار الإرسال / إلغاء / جديدة */}
             <div className="col-12 text-end">
               <button type="submit" className="btn btn-primary me-2">
-                {editData ? "Mettre à jour" : "Enregistrer"}
+                {editData ? "Mettre a jour" : "Enregistrer"}
               </button>
-              {editData && (
+              {editData ? (
                 <button type="button" className="btn btn-secondary me-2" onClick={cancelEdit}>
                   Annuler
                 </button>
-              )}
-              <button type="button" className="btn btn-success" onClick={() => setForm(defaultForm)}>
+              ) : null}
+              <button type="button" className="btn btn-success" onClick={resetForm}>
                 Nouvelle demande
               </button>
             </div>
-
           </form>
         </div>
       </div>
