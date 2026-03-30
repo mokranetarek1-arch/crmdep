@@ -626,90 +626,97 @@ export default function Assurance({ currentUser, adminProfile }) {
             </thead>
             <tbody>
               {filteredTrips.map((trip) => (
-                <tr key={trip.id}>
-                  <td>{trip.driverName}</td>
-                  <td>{new Date(trip.date).toLocaleDateString("fr-FR")}</td>
-                  <td>{trip.depart}</td>
-                  <td>{trip.destination}</td>
-                  <td>{formatMoney(trip.prix)}</td>
-                  <td>{trip.typePayment}</td>
-                  <td>
-                    <span
-                      className={`badge ${
-                        isConfirmedStatus(trip.status)
-                          ? "bg-success"
-                          : trip.status === "Annule"
-                          ? "bg-danger"
-                          : "bg-warning text-dark"
-                      }`}
-                    >
-                      {trip.status || "En cours"}
-                    </span>
-                  </td>
-                  <td>{trip.numeroDossier}</td>
-                  <td>{trip.companyName || "-"}</td>
-                  <td>
-                    {trip.note ? (
+                <>
+                  <tr key={trip.id}>
+                    <td>{trip.driverName}</td>
+                    <td>{new Date(trip.date).toLocaleDateString("fr-FR")}</td>
+                    <td>{trip.depart}</td>
+                    <td>{trip.destination}</td>
+                    <td>{formatMoney(trip.prix)}</td>
+                    <td>{trip.typePayment}</td>
+                    <td>
+                      <span
+                        className={`badge ${
+                          isConfirmedStatus(trip.status)
+                            ? "bg-success"
+                            : trip.status === "Annule"
+                            ? "bg-danger"
+                            : "bg-warning text-dark"
+                        }`}
+                      >
+                        {trip.status || "En cours"}
+                      </span>
+                    </td>
+                    <td>{trip.numeroDossier}</td>
+                    <td>{trip.companyName || "-"}</td>
+                    <td>
+                      {trip.note ? (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-primary"
+                          onClick={() =>
+                            setSelectedNote((current) =>
+                              current?.id === trip.id ? null : { id: trip.id, title: `Note ${trip.numeroDossier || trip.id}`, body: trip.note }
+                            )
+                          }
+                        >
+                          {selectedNote?.id === trip.id ? "Fermer" : "Voir"}
+                        </button>
+                      ) : (
+                        "-"
+                      )}
+                    </td>
+                    <td>{isConfirmedStatus(trip.status) ? formatMoney(trip.commission) : "-"}</td>
+                    <td>{isConfirmedStatus(trip.status) ? formatMoney(trip.driverSalary) : "-"}</td>
+                    <td>
                       <button
                         type="button"
-                        className="btn btn-sm btn-outline-primary"
-                        onClick={() => setSelectedNote({ title: `Note ${trip.numeroDossier || trip.id}`, body: trip.note })}
+                        className="btn btn-outline-dark btn-sm me-2"
+                        onClick={() =>
+                          setSelectedTrace({
+                            title: `Trace ${trip.numeroDossier || trip.id}`,
+                            createdByName: trip.createdByName || "-",
+                            createdByEmail: trip.createdByEmail || "-",
+                            updatedByName: trip.updatedByName || "-",
+                            updatedByEmail: trip.updatedByEmail || "-",
+                            updatedAt: trip.updatedAt?.toDate ? trip.updatedAt.toDate().toLocaleString("fr-FR") : "-",
+                          })
+                        }
                       >
-                        Voir
+                        Trace
                       </button>
-                    ) : (
-                      "-"
-                    )}
-                  </td>
-                  <td>{isConfirmedStatus(trip.status) ? formatMoney(trip.commission) : "-"}</td>
-                  <td>{isConfirmedStatus(trip.status) ? formatMoney(trip.driverSalary) : "-"}</td>
-                  <td>
-                    <button
-                      type="button"
-                      className="btn btn-outline-dark btn-sm me-2"
-                      onClick={() =>
-                        setSelectedTrace({
-                          title: `Trace ${trip.numeroDossier || trip.id}`,
-                          createdByName: trip.createdByName || "-",
-                          createdByEmail: trip.createdByEmail || "-",
-                          updatedByName: trip.updatedByName || "-",
-                          updatedByEmail: trip.updatedByEmail || "-",
-                          updatedAt: trip.updatedAt?.toDate ? trip.updatedAt.toDate().toLocaleString("fr-FR") : "-",
-                        })
-                      }
-                    >
-                      Trace
-                    </button>
-                    <button className="btn btn-warning btn-sm me-2" onClick={() => handleEditTrip(trip)}>
-                      Modifier
-                    </button>
-                    <button className="btn btn-danger btn-sm" onClick={() => handleDeleteTrip(trip.id)}>
-                      Supprimer
-                    </button>
-                  </td>
-                </tr>
+                      <button className="btn btn-warning btn-sm me-2" onClick={() => handleEditTrip(trip)}>
+                        Modifier
+                      </button>
+                      <button className="btn btn-danger btn-sm" onClick={() => handleDeleteTrip(trip.id)}>
+                        Supprimer
+                      </button>
+                    </td>
+                  </tr>
+                  {selectedNote?.id === trip.id ? (
+                    <tr className="note-table-row">
+                      <td colSpan="13">
+                        <div className="note-inline-card note-inline-card--row">
+                          <div className="d-flex justify-content-between align-items-start gap-3 mb-3">
+                            <div>
+                              <div className="note-modal-label">DETAIL</div>
+                              <h5 className="mb-0">{selectedNote.title}</h5>
+                            </div>
+                            <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setSelectedNote(null)}>
+                              Fermer
+                            </button>
+                          </div>
+                          <div className="note-modal-body">{selectedNote.body}</div>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : null}
+                </>
               ))}
             </tbody>
           </table>
         </div>
       </div>
-
-      {selectedNote ? (
-        <div className="note-modal-backdrop" onClick={() => setSelectedNote(null)}>
-          <div className="note-modal-card" onClick={(event) => event.stopPropagation()}>
-            <div className="d-flex justify-content-between align-items-start gap-3 mb-3">
-              <div>
-                <div className="note-modal-label">DETAIL</div>
-                <h5 className="mb-0">{selectedNote.title}</h5>
-              </div>
-              <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setSelectedNote(null)}>
-                Fermer
-              </button>
-            </div>
-            <div className="note-modal-body">{selectedNote.body}</div>
-          </div>
-        </div>
-      ) : null}
 
       {selectedTrace ? (
         <div className="note-modal-backdrop" onClick={() => setSelectedTrace(null)}>

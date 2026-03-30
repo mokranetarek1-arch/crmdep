@@ -299,83 +299,107 @@ Merci pour votre confiance`;
               paginatedRows.map((row) => {
                 const dateObj = row.date?.toDate ? row.date.toDate() : row.date ? new Date(row.date) : null;
                 return (
-                  <tr key={row.docId}>
-                    <td>{row.source}</td>
-                    <td>{row.id}</td>
-                    <td>{row.motif}</td>
-                    <td>{row.phone || "-"}</td>
-                    <td>{row.depart || "-"}</td>
-                    <td>{row.destination || "-"}</td>
-                    <td>{row.kilometrage || "-"}</td>
-                    <td>{row.wilaya}</td>
-                    <td>{row.marqueVehicule || "-"}</td>
-                    <td>{row.quantite}</td>
-                    <td>
-                      <span
-                        className={`badge ${
-                          isCancelledStatus(row.status)
-                            ? "bg-danger"
-                            : isConfirmedStatus(row.status)
-                            ? "bg-success"
-                            : "bg-warning text-dark"
-                        }`}
-                      >
-                        {row.status}
-                      </span>
-                    </td>
-                    <td>{row.dispatch || "-"}</td>
-                    <td>{row.driverName || "-"}</td>
-                    <td>{row.prix ? `${row.prix} DA` : "-"}</td>
-                    <td>{row.panneType || "-"}</td>
-                    <td>{dateObj ? dateObj.toLocaleDateString() : "-"}</td>
-                    <td>{row.heure || "-"}</td>
-                    <td>{formatCreatedAt(row)}</td>
-                    <td>
-                      {row.note ? (
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-outline-primary"
-                          onClick={() => setSelectedNote({ title: `Note CRM ${row.id || row.docId}`, body: row.note })}
+                  <>
+                    <tr key={row.docId}>
+                      <td>{row.source}</td>
+                      <td>{row.id}</td>
+                      <td>{row.motif}</td>
+                      <td>{row.phone || "-"}</td>
+                      <td>{row.depart || "-"}</td>
+                      <td>{row.destination || "-"}</td>
+                      <td>{row.kilometrage || "-"}</td>
+                      <td>{row.wilaya}</td>
+                      <td>{row.marqueVehicule || "-"}</td>
+                      <td>{row.quantite}</td>
+                      <td>
+                        <span
+                          className={`badge ${
+                            isCancelledStatus(row.status)
+                              ? "bg-danger"
+                              : isConfirmedStatus(row.status)
+                              ? "bg-success"
+                              : "bg-warning text-dark"
+                          }`}
                         >
-                          Voir
+                          {row.status}
+                        </span>
+                      </td>
+                      <td>{row.dispatch || "-"}</td>
+                      <td>{row.driverName || "-"}</td>
+                      <td>{row.prix ? `${row.prix} DA` : "-"}</td>
+                      <td>{row.panneType || "-"}</td>
+                      <td>{dateObj ? dateObj.toLocaleDateString() : "-"}</td>
+                      <td>{row.heure || "-"}</td>
+                      <td>{formatCreatedAt(row)}</td>
+                      <td>
+                        {row.note ? (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-primary"
+                            onClick={() =>
+                              setSelectedNote((current) =>
+                                current?.id === row.docId ? null : { id: row.docId, title: `Note CRM ${row.id || row.docId}`, body: row.note }
+                              )
+                            }
+                          >
+                            {selectedNote?.id === row.docId ? "Fermer" : "Voir"}
+                          </button>
+                        ) : (
+                          "-"
+                        )}
+                      </td>
+                      <td>
+                        <button className="btn btn-sm btn-primary me-2" onClick={() => onEdit(row)}>
+                          Modifier
                         </button>
-                      ) : (
-                        "-"
-                      )}
-                    </td>
-                    <td>
-                      <button className="btn btn-sm btn-primary me-2" onClick={() => onEdit(row)}>
-                        Modifier
-                      </button>
-                      <button
-                        className="btn btn-sm btn-outline-dark me-2"
-                        onClick={() =>
-                          setSelectedTrace({
-                            title: `Trace ${row.id || row.docId}`,
-                            createdByName: row.createdByName || "-",
-                            createdByEmail: row.createdByEmail || "-",
-                            updatedByName: row.updatedByName || "-",
-                            updatedByEmail: row.updatedByEmail || "-",
-                            createdAt: formatCreatedAt(row),
-                            updatedAt: row.updatedAt?.toDate ? row.updatedAt.toDate().toLocaleString("fr-FR") : "-",
-                          })
-                        }
-                      >
-                        Trace
-                      </button>
-                      <button className="btn btn-sm btn-danger me-2" onClick={() => handleDelete(row.docId)}>
-                        Supprimer
-                      </button>
-                      {isConfirmedStatus(row.status) && (
                         <button
-                          className="btn btn-sm btn-success"
-                          onClick={() => sendWhatsApp(row.phone, row.id, row.depart, row.destination, row.prix)}
+                          className="btn btn-sm btn-outline-dark me-2"
+                          onClick={() =>
+                            setSelectedTrace({
+                              title: `Trace ${row.id || row.docId}`,
+                              createdByName: row.createdByName || "-",
+                              createdByEmail: row.createdByEmail || "-",
+                              updatedByName: row.updatedByName || "-",
+                              updatedByEmail: row.updatedByEmail || "-",
+                              createdAt: formatCreatedAt(row),
+                              updatedAt: row.updatedAt?.toDate ? row.updatedAt.toDate().toLocaleString("fr-FR") : "-",
+                            })
+                          }
                         >
-                          WhatsApp
+                          Trace
                         </button>
-                      )}
-                    </td>
-                  </tr>
+                        <button className="btn btn-sm btn-danger me-2" onClick={() => handleDelete(row.docId)}>
+                          Supprimer
+                        </button>
+                        {isConfirmedStatus(row.status) && (
+                          <button
+                            className="btn btn-sm btn-success"
+                            onClick={() => sendWhatsApp(row.phone, row.id, row.depart, row.destination, row.prix)}
+                          >
+                            WhatsApp
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                    {selectedNote?.id === row.docId ? (
+                      <tr className="note-table-row">
+                        <td colSpan="20">
+                          <div className="note-inline-card note-inline-card--row">
+                            <div className="d-flex justify-content-between align-items-start gap-3 mb-3">
+                              <div>
+                                <div className="note-modal-label">DETAIL</div>
+                                <h5 className="mb-0">{selectedNote.title}</h5>
+                              </div>
+                              <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setSelectedNote(null)}>
+                                Fermer
+                              </button>
+                            </div>
+                            <div className="note-modal-body">{selectedNote.body}</div>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : null}
+                  </>
                 );
               })
             )}
@@ -399,24 +423,6 @@ Merci pour votre confiance`;
           Suivant
         </button>
       </div>
-
-      {selectedNote ? (
-        <div className="note-modal-backdrop" onClick={() => setSelectedNote(null)}>
-          <div className="note-modal-card" onClick={(event) => event.stopPropagation()}>
-            <div className="d-flex justify-content-between align-items-start gap-3 mb-3">
-              <div>
-                <div className="note-modal-label">DETAIL</div>
-                <h5 className="mb-0">{selectedNote.title}</h5>
-              </div>
-              <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setSelectedNote(null)}>
-                Fermer
-              </button>
-            </div>
-            <div className="note-modal-body">{selectedNote.body}</div>
-          </div>
-        </div>
-      ) : null}
-
       {selectedTrace ? (
         <div className="note-modal-backdrop" onClick={() => setSelectedTrace(null)}>
           <div className="note-modal-card" onClick={(event) => event.stopPropagation()}>

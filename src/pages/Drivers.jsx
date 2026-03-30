@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   addDoc,
   collection,
@@ -13,7 +13,6 @@ import {
 import { db } from "../firebase";
 import { logAuditAction } from "../utils/audit";
 
-const COMMISSION_RATE = 0.1;
 const emptyDriver = {
   firstName: "",
   lastName: "",
@@ -52,7 +51,22 @@ const formatField = (value) => {
   return String(value);
 };
 
-export default function Drivers({ currentUser, adminProfile }) {
+const getRequestCommissionAmount = (row) => {
+  const explicitAmount = Number(row?.commissionAmount);
+  if (Number.isFinite(explicitAmount) && explicitAmount >= 0) return explicitAmount;
+  const rate = Number(row?.commissionRate);
+  const safeRate = Number.isFinite(rate) ? rate : 10;
+  return ((Number(row?.prix) || 0) * safeRate) / 100;
+};
+
+export default function Drivers({
+  currentUser,
+  adminProfile,
+  profileMode = false,
+  driverProfileId = "",
+  onOpenProfile,
+  onBackToList,
+}) {
   const [drivers, setDrivers] = useState([]);
   const [selectedDriver, setSelectedDriver] = useState(null);
   const [driverTrips, setDriverTrips] = useState([]);
@@ -64,11 +78,16 @@ export default function Drivers({ currentUser, adminProfile }) {
     monthly: {},
   });
   const [paymentByMonth, setPaymentByMonth] = useState({});
+  const [paymentByTrip, setPaymentByTrip] = useState({});
+  const [paymentRecords, setPaymentRecords] = useState([]);
   const [newDriver, setNewDriver] = useState(emptyDriver);
   const [editingDriverId, setEditingDriverId] = useState("");
   const [editDriverForm, setEditDriverForm] = useState(emptyDriver);
   const [monthFilter, setMonthFilter] = useState("");
+  const [periodStart, setPeriodStart] = useState("");
+  const [periodEnd, setPeriodEnd] = useState("");
   const [tripTypeFilter, setTripTypeFilter] = useState("");
+  const [manualTripPaymentMode, setManualTripPaymentMode] = useState(false);
 
   const fetchDrivers = async () => {
     try {
@@ -200,6 +219,8 @@ export default function Drivers({ currentUser, adminProfile }) {
 
   const buildPaymentByMonth = (paymentDocs) => {
     const grouped = {};
+    const groupedTrips = {};
+    const records = paymentDocs.map((entry) => ({ id: entry.id, ...entry.data() }));
     paymentDocs.forEach((entry) => {
       const payment = entry.data();
       if (!payment.regle) return;
@@ -209,23 +230,101 @@ export default function Drivers({ currentUser, adminProfile }) {
         particulier: 0,
         assurance: 0,
         societe: 0,
+        cashOut: 0,
+        balanceOffsetParticulier: 0,
+        balanceSettlements: 0,
       };
+
+      if (payment.tripId) {
+        groupedTrips[payment.tripId] = groupedTrips[payment.tripId] || {
+          paidAmount: 0,
+          cashOut: 0,
+          offsetParticulier: 0,
+          records: [],
+        };
+      }
+
+      if (payment.actionType === "balance_payout") {
+        const cashAmount = Number(payment.cashAmount ?? payment.amount) || 0;
+        const offsetParticulier = Number(payment.offsetParticulier) || 0;
+        const assuranceCovered = Number(payment.assuranceCovered) || 0;
+        const societeCovered = Number(payment.societeCovered) || 0;
+
+        grouped[key].cashOut += cashAmount;
+        grouped[key].balanceOffsetParticulier += offsetParticulier;
+        grouped[key].balanceSettlements += 1;
+        grouped[key].particulier += offsetParticulier;
+        grouped[key].assurance += assuranceCovered;
+        grouped[key].societe += societeCovered;
+        grouped[key].total += cashAmount + offsetParticulier;
+        return;
+      }
+
+      if (payment.actionType === "trip_balance_payout") {
+        const cashAmount = Number(payment.cashAmount ?? payment.amount) || 0;
+        const offsetParticulier = Number(payment.offsetParticulier) || 0;
+        const coveredAmount = Number(payment.coveredAmount ?? payment.amount) || 0;
+
+        grouped[key].cashOut += cashAmount;
+        grouped[key].balanceOffsetParticulier += offsetParticulier;
+        grouped[key].balanceSettlements += 1;
+        grouped[key].particulier += offsetParticulier;
+        if (payment.sourceType && grouped[key][payment.sourceType] !== undefined) {
+          grouped[key][payment.sourceType] += coveredAmount;
+        }
+        grouped[key].total += cashAmount + offsetParticulier;
+        if (payment.tripId) {
+          groupedTrips[payment.tripId].paidAmount += coveredAmount;
+          groupedTrips[payment.tripId].cashOut += cashAmount;
+          groupedTrips[payment.tripId].offsetParticulier += offsetParticulier;
+          groupedTrips[payment.tripId].records.push({ id: entry.id, ...payment });
+        }
+        return;
+      }
+
       const tripType =
         payment.tripType ||
         (payment.source === "requests" ? "particulier" : payment.source === "assuranceTrips" ? "assurance" : "");
-      grouped[key].total += Number(payment.amount) || 0;
+      const amount = Number(payment.amount) || 0;
+      grouped[key].total += amount;
       if (tripType && grouped[key][tripType] !== undefined) {
-        grouped[key][tripType] += Number(payment.amount) || 0;
+        grouped[key][tripType] += amount;
+      }
+      if (payment.actionType === "payout") {
+        grouped[key].cashOut += amount;
+      }
+      if (payment.tripId) {
+        groupedTrips[payment.tripId].paidAmount += amount;
+        groupedTrips[payment.tripId].cashOut += payment.actionType === "payout" ? amount : 0;
+        groupedTrips[payment.tripId].records.push({ id: entry.id, ...payment });
       }
     });
+    setPaymentRecords(records);
     setPaymentByMonth(grouped);
+    setPaymentByTrip(groupedTrips);
   };
 
-  const filterTripsByMonth = (trips, month, tripType = "") => {
+  const isInPeriodRange = useCallback((date) => {
+    if (!date) return false;
+    const current = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    if (periodStart) {
+      const start = new Date(periodStart);
+      if (current < start) return false;
+    }
+    if (periodEnd) {
+      const end = new Date(periodEnd);
+      end.setHours(23, 59, 59, 999);
+      if (current > end) return false;
+    }
+    return true;
+  }, [periodStart, periodEnd]);
+
+  const filterTripsByMonth = useCallback((trips, month, tripType = "") => {
     const filtered = trips.filter((trip) => {
       const matchMonth = month ? getMonthKey(trip.date) === month : true;
       const matchType = tripType ? trip.tripType === tripType : true;
-      return matchMonth && matchType;
+      const matchPeriod = isInPeriodRange(trip.date);
+      return matchMonth && matchType && matchPeriod;
     });
 
     const stats = filtered.reduce(
@@ -241,6 +340,9 @@ export default function Drivers({ currentUser, adminProfile }) {
           particulier: 0,
           assurance: 0,
           societe: 0,
+          revenueParticulier: 0,
+          revenueAssurance: 0,
+          revenueSociete: 0,
           payableParticulier: 0,
           payableAssurance: 0,
           payableSociete: 0,
@@ -248,9 +350,18 @@ export default function Drivers({ currentUser, adminProfile }) {
         acc.monthly[monthKey].benefit += trip.commission;
         acc.monthly[monthKey].payable += trip.payableAmount;
         acc.monthly[monthKey][trip.tripType] += trip.commission;
-        if (trip.tripType === "particulier") acc.monthly[monthKey].payableParticulier += trip.payableAmount;
-        if (trip.tripType === "assurance") acc.monthly[monthKey].payableAssurance += trip.payableAmount;
-        if (trip.tripType === "societe") acc.monthly[monthKey].payableSociete += trip.payableAmount;
+        if (trip.tripType === "particulier") {
+          acc.monthly[monthKey].payableParticulier += trip.payableAmount;
+          acc.monthly[monthKey].revenueParticulier += trip.price;
+        }
+        if (trip.tripType === "assurance") {
+          acc.monthly[monthKey].payableAssurance += trip.payableAmount;
+          acc.monthly[monthKey].revenueAssurance += trip.price;
+        }
+        if (trip.tripType === "societe") {
+          acc.monthly[monthKey].payableSociete += trip.payableAmount;
+          acc.monthly[monthKey].revenueSociete += trip.price;
+        }
         return acc;
       },
       { totalTrips: 0, totalBenefit: 0, totalPayable: 0, monthly: {} }
@@ -258,9 +369,9 @@ export default function Drivers({ currentUser, adminProfile }) {
 
     setDriverTrips(filtered);
     setDriverStats(stats);
-  };
+  }, [isInPeriodRange]);
 
-  const fetchDriverTrips = async (driver) => {
+  const fetchDriverTrips = useCallback(async (driver) => {
     setSelectedDriver(driver);
 
     const [requestsSnap, assuranceSnap, paymentsSnap] = await Promise.all([
@@ -274,7 +385,7 @@ export default function Drivers({ currentUser, adminProfile }) {
         const trip = entry.data();
         const date = parseDate(trip.date, trip.createdAt || trip.timestamp);
         const price = Number(trip.prix) || 0;
-        const commission = price * COMMISSION_RATE;
+        const commission = getRequestCommissionAmount(trip);
         return {
           id: entry.id,
           tripType: "particulier",
@@ -321,20 +432,41 @@ export default function Drivers({ currentUser, adminProfile }) {
     setAllTrips(mergedTrips);
     filterTripsByMonth(mergedTrips, monthFilter, tripTypeFilter);
     buildPaymentByMonth(paymentsSnap.docs);
-  };
+  }, [filterTripsByMonth, monthFilter, tripTypeFilter]);
+
+  useEffect(() => {
+    if (!profileMode || !driverProfileId || drivers.length === 0) return;
+    const targetDriver = drivers.find((driver) => driver.driverId === driverProfileId);
+    if (targetDriver) {
+      fetchDriverTrips(targetDriver);
+    }
+  }, [profileMode, driverProfileId, drivers, fetchDriverTrips]);
 
   useEffect(() => {
     if (selectedDriver) {
       filterTripsByMonth(allTrips, monthFilter, tripTypeFilter);
     }
-  }, [monthFilter, tripTypeFilter, allTrips, selectedDriver]);
+  }, [monthFilter, tripTypeFilter, periodStart, periodEnd, allTrips, selectedDriver, filterTripsByMonth]);
 
   const monthlyRows = useMemo(
     () =>
       Object.entries(driverStats.monthly)
         .sort(([first], [second]) => second.localeCompare(first))
         .map(([month, values]) => {
-          const paidAmount = paymentByMonth[month] || 0;
+          const paidAmount = paymentByMonth[month] || {};
+          const remainingParticulier = Math.max(values.payableParticulier - (paidAmount.particulier || 0), 0);
+          const remainingAssurance = Math.max(values.payableAssurance - (paidAmount.assurance || 0), 0);
+          const remainingSociete = Math.max(values.payableSociete - (paidAmount.societe || 0), 0);
+          const netBalance = remainingParticulier - (remainingAssurance + remainingSociete);
+          const amountWeOweDriver = remainingAssurance + remainingSociete;
+          const amountDriverOwesUs = remainingParticulier;
+          const netPaymentToDriver = Math.max(amountWeOweDriver - amountDriverOwesUs, 0);
+          const offsetUsed = Math.min(amountDriverOwesUs, amountWeOweDriver);
+          const hasMonthlyPayments = paymentRecords.some(
+            (payment) =>
+              payment.regle === true &&
+              `${payment.year}-${String(payment.month).padStart(2, "0")}` === month
+          );
           return {
             month,
             ...values,
@@ -342,18 +474,28 @@ export default function Drivers({ currentUser, adminProfile }) {
             paidParticulier: paidAmount.particulier || 0,
             paidAssurance: paidAmount.assurance || 0,
             paidSociete: paidAmount.societe || 0,
-            remainingParticulier: Math.max(values.payableParticulier - (paidAmount.particulier || 0), 0),
-            remainingAssurance: Math.max(values.payableAssurance - (paidAmount.assurance || 0), 0),
-            remainingSociete: Math.max(values.payableSociete - (paidAmount.societe || 0), 0),
+            cashOut: paidAmount.cashOut || 0,
+            balanceOffsetParticulier: paidAmount.balanceOffsetParticulier || 0,
+            hasBalanceSettlement: (paidAmount.balanceSettlements || 0) > 0,
+            remainingParticulier,
+            remainingAssurance,
+            remainingSociete,
             remaining: Math.max(values.payable - (paidAmount.total || 0), 0),
             isPaid: (paidAmount.total || 0) >= values.payable && values.payable > 0,
+            netBalance,
+            amountWeOweDriver,
+            amountDriverOwesUs,
+            netPaymentToDriver,
+            offsetUsed,
+            hasMonthlyPayments,
           };
         }),
-    [driverStats.monthly, paymentByMonth]
+    [driverStats.monthly, paymentByMonth, paymentRecords]
   );
 
-  const paidTotal = monthlyRows.reduce((sum, row) => sum + row.paidAmount, 0);
-  const remainingTotal = Math.max(driverStats.totalPayable - paidTotal, 0);
+  const paidTotal = monthlyRows.reduce((sum, row) => sum + row.cashOut, 0);
+  const netBalanceTotal = monthlyRows.reduce((sum, row) => sum + row.netBalance, 0);
+  const monthlyRowsMap = useMemo(() => Object.fromEntries(monthlyRows.map((row) => [row.month, row])), [monthlyRows]);
   const typeTotals = useMemo(
     () =>
       driverTrips.reduce(
@@ -365,36 +507,55 @@ export default function Drivers({ currentUser, adminProfile }) {
       ),
     [driverTrips]
   );
+  const driverRevenueTotals = useMemo(
+    () =>
+      driverTrips.reduce(
+        (acc, trip) => {
+          acc[trip.tripType] += trip.price;
+          acc.total += trip.price;
+          return acc;
+        },
+        { particulier: 0, assurance: 0, societe: 0, total: 0 }
+      ),
+    [driverTrips]
+  );
 
-  const handleMonthPayment = async (month, tripType) => {
+  const refreshPayments = async (driverId) => {
+    const paymentsSnap = await getDocs(query(collection(db, "driverPayments"), where("driverId", "==", driverId)));
+    buildPaymentByMonth(paymentsSnap.docs);
+  };
+
+  const getRemainingParticulierDebt = () => {
+    const totalParticulierDue = allTrips
+      .filter((trip) => trip.tripType === "particulier")
+      .reduce((sum, trip) => sum + trip.payableAmount, 0);
+    const totalParticulierCovered = paymentRecords.reduce((sum, payment) => {
+      if (!payment.regle) return sum;
+      if (payment.tripType === "particulier") return sum + (Number(payment.amount) || 0);
+      if (payment.actionType === "trip_balance_payout" || payment.actionType === "balance_payout") {
+        return sum + (Number(payment.offsetParticulier) || 0);
+      }
+      return sum;
+    }, 0);
+    return Math.max(totalParticulierDue - totalParticulierCovered, 0);
+  };
+
+  const handleMonthlyParticulierSettlement = async (row) => {
     if (!selectedDriver) return;
-
-    const monthTrips = allTrips.filter((trip) => getMonthKey(trip.date) === month && trip.tripType === tripType);
-    if (monthTrips.length === 0) return;
-
-    const source = tripType === "particulier" ? "requests" : "assuranceTrips";
-    const actionType = tripType === "particulier" ? "collect" : "payout";
-    const amountDue = monthTrips.reduce((sum, trip) => sum + trip.payableAmount, 0);
-    const paidForType = paymentByMonth[month]?.[tripType] || 0;
-    const remaining = Math.max(amountDue - paidForType, 0);
-    if (remaining <= 0) return;
-    if (
-      !window.confirm(
-        `${tripType === "particulier" ? "Encaisser" : "Payer"} ${formatMoney(remaining)} pour ${tripType} sur ${month} ?`
-      )
-    ) {
+    if (row.remainingParticulier <= 0) return;
+    if (!window.confirm(`Marquer ${formatMoney(row.remainingParticulier)} comme regle pour le particulier sur ${row.month} ?`)) {
       return;
     }
 
-    const [yearStr, monthStr] = month.split("-");
+    const [yearStr, monthStr] = row.month.split("-");
     await addDoc(collection(db, "driverPayments"), {
       driverId: selectedDriver.driverId,
-      source,
-      tripType,
-      actionType,
+      source: "requests",
+      tripType: "particulier",
+      actionType: "collect",
       month: monthStr,
       year: Number(yearStr),
-      amount: remaining,
+      amount: row.remainingParticulier,
       regle: true,
       paidAt: serverTimestamp(),
     });
@@ -403,46 +564,167 @@ export default function Drivers({ currentUser, adminProfile }) {
       adminProfile,
       action: "payment",
       entityType: "driverPayment",
-      entityId: `${selectedDriver.driverId}-${month}-${tripType}`,
-      description: `${tripType === "particulier" ? "Encaissement" : "Paiement"} ${tripType} pour ${month}`,
-      metadata: { driverId: selectedDriver.driverId, month, tripType, amount: remaining, actionType },
+      entityId: `${selectedDriver.driverId}-${row.month}-particulier`,
+      description: `Reglement particulier pour ${row.month}`,
+      metadata: { driverId: selectedDriver.driverId, month: row.month, tripType: "particulier", amount: row.remainingParticulier },
     });
 
-    const paymentsSnap = await getDocs(query(collection(db, "driverPayments"), where("driverId", "==", selectedDriver.driverId)));
-    buildPaymentByMonth(paymentsSnap.docs);
+    await refreshPayments(selectedDriver.driverId);
   };
 
-  const undoMonthPayment = async (month, tripType) => {
+  const handleTripPayment = async (trip) => {
     if (!selectedDriver) return;
-    if (!window.confirm(`Annuler l'action ${tripType} pour ${month} ?`)) return;
-
-    const [yearStr, monthStr] = month.split("-");
-    const paymentsSnap = await getDocs(
-      query(
-        collection(db, "driverPayments"),
-        where("driverId", "==", selectedDriver.driverId),
-        where("year", "==", Number(yearStr)),
-        where("month", "==", monthStr),
-        where("tripType", "==", tripType),
-        where("regle", "==", true)
-      )
+    if (!["assurance", "societe"].includes(trip.tripType)) return;
+    const tripPaid = paymentByTrip[trip.id]?.paidAmount || 0;
+    const remainingTripAmount = Math.max(trip.payableAmount - tripPaid, 0);
+    if (remainingTripAmount <= 0) return;
+    const availableParticulierDebt = getRemainingParticulierDebt();
+    const offsetParticulier = Math.min(availableParticulierDebt, remainingTripAmount);
+    const cashAmount = Math.max(remainingTripAmount - offsetParticulier, 0);
+    const shouldConfirm = window.confirm(
+      `Regler cette course ${trip.tripType} ?\n\nMontant course: ${formatMoney(remainingTripAmount)}\nCompensation particulier: ${formatMoney(
+        offsetParticulier
+      )}\nPaiement reel: ${formatMoney(cashAmount)}`
     );
+    if (!shouldConfirm) return;
 
-    for (const entry of paymentsSnap.docs) {
-      await deleteDoc(doc(db, "driverPayments", entry.id));
+    const month = getMonthKey(trip.date);
+    const [yearStr, monthStr] = month.split("-");
+    await addDoc(collection(db, "driverPayments"), {
+      driverId: selectedDriver.driverId,
+      source: "assuranceTrips",
+      sourceType: trip.tripType,
+      tripType: trip.tripType,
+      actionType: "trip_balance_payout",
+      tripId: trip.id,
+      month: monthStr,
+      year: Number(yearStr),
+      amount: remainingTripAmount,
+      coveredAmount: remainingTripAmount,
+      cashAmount,
+      offsetParticulier,
+      regle: true,
+      paidAt: serverTimestamp(),
+    });
+    await logAuditAction({
+      currentUser,
+      adminProfile,
+      action: "payment",
+      entityType: "driverPayment",
+      entityId: `${selectedDriver.driverId}-${trip.id}-trip-payment`,
+      description: `Paiement ${trip.tripType} pour la course ${trip.id}`,
+      metadata: {
+        driverId: selectedDriver.driverId,
+        tripId: trip.id,
+        month,
+        tripType: trip.tripType,
+        actionType: "trip_balance_payout",
+        cashAmount,
+        offsetParticulier,
+        coveredAmount: remainingTripAmount,
+      },
+    });
+
+    await refreshPayments(selectedDriver.driverId);
+  };
+
+  const handleMonthlyBalancePayment = async (row) => {
+    if (!selectedDriver) return;
+    if (row.amountWeOweDriver <= 0) return;
+
+    const shouldConfirm = window.confirm(
+      `Regler le solde du mois ${row.month} ?\n\nNous devons: ${formatMoney(row.amountWeOweDriver)}\nLe chauffeur doit: ${formatMoney(
+        row.amountDriverOwesUs
+      )}\nPaiement reel: ${formatMoney(row.netPaymentToDriver)}`
+    );
+    if (!shouldConfirm) return;
+
+    const [yearStr, monthStr] = row.month.split("-");
+    await addDoc(collection(db, "driverPayments"), {
+      driverId: selectedDriver.driverId,
+      source: "balance",
+      tripType: "balance",
+      actionType: "balance_payout",
+      month: monthStr,
+      year: Number(yearStr),
+      amount: row.netPaymentToDriver,
+      cashAmount: row.netPaymentToDriver,
+      offsetParticulier: row.offsetUsed,
+      assuranceCovered: row.remainingAssurance,
+      societeCovered: row.remainingSociete,
+      regle: true,
+      paidAt: serverTimestamp(),
+    });
+    await logAuditAction({
+      currentUser,
+      adminProfile,
+      action: "payment",
+      entityType: "driverPayment",
+      entityId: `${selectedDriver.driverId}-${row.month}-balance`,
+      description: `Reglement du solde mensuel pour ${row.month}`,
+      metadata: {
+        driverId: selectedDriver.driverId,
+        month: row.month,
+        actionType: "balance_payout",
+        cashAmount: row.netPaymentToDriver,
+        offsetParticulier: row.offsetUsed,
+        assuranceCovered: row.remainingAssurance,
+        societeCovered: row.remainingSociete,
+      },
+    });
+
+    await refreshPayments(selectedDriver.driverId);
+  };
+
+  const undoTripPayment = async (trip) => {
+    if (!selectedDriver) return;
+    if (!window.confirm(`Annuler le paiement de cette course ${trip.tripType} ?`)) return;
+
+    const targetPayments = paymentRecords.filter((payment) => payment.tripId === trip.id && payment.regle === true);
+    for (const payment of targetPayments) {
+      await deleteDoc(doc(db, "driverPayments", payment.id));
     }
+
     await logAuditAction({
       currentUser,
       adminProfile,
       action: "payment_cancel",
       entityType: "driverPayment",
-      entityId: `${selectedDriver.driverId}-${month}-${tripType}`,
-      description: `Annulation action ${tripType} pour ${month}`,
-      metadata: { driverId: selectedDriver.driverId, month, tripType },
+      entityId: `${selectedDriver.driverId}-${trip.id}-trip-payment`,
+      description: `Annulation paiement course ${trip.id}`,
+      metadata: { driverId: selectedDriver.driverId, tripId: trip.id, tripType: trip.tripType },
     });
 
-    const refreshedPayments = await getDocs(query(collection(db, "driverPayments"), where("driverId", "==", selectedDriver.driverId)));
-    buildPaymentByMonth(refreshedPayments.docs);
+    await refreshPayments(selectedDriver.driverId);
+  };
+
+  const undoMonthPayments = async (month) => {
+    if (!selectedDriver) return;
+    if (!window.confirm(`Annuler toutes les actions de paiement du mois ${month} ?`)) return;
+
+    const targetPayments = paymentRecords.filter(
+      (payment) =>
+        payment.regle === true &&
+        `${payment.year}-${String(payment.month).padStart(2, "0")}` === month
+    );
+
+    if (targetPayments.length === 0) return;
+
+    for (const payment of targetPayments) {
+      await deleteDoc(doc(db, "driverPayments", payment.id));
+    }
+
+    await logAuditAction({
+      currentUser,
+      adminProfile,
+      action: "payment_cancel",
+      entityType: "driverPayment",
+      entityId: `${selectedDriver.driverId}-${month}-all`,
+      description: `Annulation de toutes les actions de paiement pour ${month}`,
+      metadata: { driverId: selectedDriver.driverId, month, count: targetPayments.length },
+    });
+
+    await refreshPayments(selectedDriver.driverId);
   };
 
   return (
@@ -454,6 +736,7 @@ export default function Drivers({ currentUser, adminProfile }) {
         </div>
       </div>
 
+      {!profileMode ? (
       <div className="panel-card mb-4">
         <div className="row g-2">
           {["firstName", "lastName", "phone", "wilaya", "region"].map((field) => (
@@ -481,7 +764,9 @@ export default function Drivers({ currentUser, adminProfile }) {
           </div>
         </div>
       </div>
+      ) : null}
 
+      {!profileMode ? (
       <div className="row g-3">
         {drivers.map((driver) => (
           <div key={driver.driverId} className="col-md-4">
@@ -529,7 +814,10 @@ export default function Drivers({ currentUser, adminProfile }) {
                   </p>
                   <p className="mb-3">Camions: {formatField(driver.trucks)}</p>
                   <div className="d-flex gap-2 flex-wrap">
-                    <button className="btn btn-info btn-sm" onClick={() => fetchDriverTrips(driver)}>
+                    <button
+                      className="btn btn-info btn-sm"
+                      onClick={() => (onOpenProfile ? onOpenProfile(driver.driverId) : fetchDriverTrips(driver))}
+                    >
                       Details
                     </button>
                     <button className="btn btn-warning btn-sm" onClick={() => startEditDriver(driver)}>
@@ -545,6 +833,7 @@ export default function Drivers({ currentUser, adminProfile }) {
           </div>
         ))}
       </div>
+      ) : null}
 
       {selectedDriver ? (
         <div className="mt-4">
@@ -555,8 +844,16 @@ export default function Drivers({ currentUser, adminProfile }) {
               </h3>
               <p className="page-subtitle">Les courses particulier, assurance et societe sont fusionnees dans ce compte.</p>
             </div>
-            <button className="btn btn-secondary" onClick={() => setSelectedDriver(null)}>
-              Retour
+            <button
+              className="btn btn-secondary"
+              onClick={() => {
+                setSelectedDriver(null);
+                if (profileMode && onBackToList) {
+                  onBackToList();
+                }
+              }}
+            >
+              {profileMode ? "Retour aux conducteurs" : "Retour"}
             </button>
           </div>
 
@@ -567,6 +864,14 @@ export default function Drivers({ currentUser, adminProfile }) {
                 <input type="month" className="form-control" value={monthFilter} onChange={(event) => setMonthFilter(event.target.value)} />
               </div>
               <div className="col-md-3">
+                <label className="form-label">Periode du</label>
+                <input type="date" className="form-control" value={periodStart} onChange={(event) => setPeriodStart(event.target.value)} />
+              </div>
+              <div className="col-md-3">
+                <label className="form-label">au</label>
+                <input type="date" className="form-control" value={periodEnd} onChange={(event) => setPeriodEnd(event.target.value)} />
+              </div>
+              <div className="col-md-3">
                 <label className="form-label">Type de course</label>
                 <select className="form-select" value={tripTypeFilter} onChange={(event) => setTripTypeFilter(event.target.value)}>
                   <option value="">Tous</option>
@@ -574,6 +879,79 @@ export default function Drivers({ currentUser, adminProfile }) {
                   <option value="assurance">Assurance</option>
                   <option value="societe">Societe</option>
                 </select>
+              </div>
+            </div>
+            <div className="form-check form-switch mt-3">
+              <input
+                className="form-check-input"
+                type="checkbox"
+                role="switch"
+                id="manualTripPaymentMode"
+                checked={manualTripPaymentMode}
+                onChange={(event) => setManualTripPaymentMode(event.target.checked)}
+              />
+              <label className="form-check-label" htmlFor="manualTripPaymentMode">
+                Paiement manuel par course pour assurance et societe
+              </label>
+            </div>
+          </div>
+
+          <div className="panel-card mb-4">
+            <h5 className="section-title">Revenu chauffeur</h5>
+            <div className="row g-3">
+              <div className="col-md-3">
+                <div className="metric-card">
+                  <span className="metric-label">Particulier</span>
+                  <strong className="metric-value">{formatMoney(driverRevenueTotals.particulier)}</strong>
+                </div>
+              </div>
+              <div className="col-md-3">
+                <div className="metric-card">
+                  <span className="metric-label">Assurance</span>
+                  <strong className="metric-value">{formatMoney(driverRevenueTotals.assurance)}</strong>
+                </div>
+              </div>
+              <div className="col-md-3">
+                <div className="metric-card">
+                  <span className="metric-label">Societe</span>
+                  <strong className="metric-value">{formatMoney(driverRevenueTotals.societe)}</strong>
+                </div>
+              </div>
+              <div className="col-md-3">
+                <div className="metric-card metric-card--success">
+                  <span className="metric-label">Revenu total</span>
+                  <strong className="metric-value">{formatMoney(driverRevenueTotals.total)}</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="panel-card mb-4">
+            <h5 className="section-title">Commission / benefice</h5>
+            <div className="row g-3">
+              <div className="col-md-3">
+                <div className="metric-card">
+                  <span className="metric-label">Particulier</span>
+                  <strong className="metric-value">{formatMoney(typeTotals.particulier)}</strong>
+                </div>
+              </div>
+              <div className="col-md-3">
+                <div className="metric-card">
+                  <span className="metric-label">Assurance</span>
+                  <strong className="metric-value">{formatMoney(typeTotals.assurance)}</strong>
+                </div>
+              </div>
+              <div className="col-md-3">
+                <div className="metric-card">
+                  <span className="metric-label">Societe</span>
+                  <strong className="metric-value">{formatMoney(typeTotals.societe)}</strong>
+                </div>
+              </div>
+              <div className="col-md-3">
+                <div className="metric-card metric-card--success">
+                  <span className="metric-label">Total</span>
+                  <strong className="metric-value">{formatMoney(driverStats.totalBenefit)}</strong>
+                </div>
               </div>
             </div>
           </div>
@@ -587,38 +965,21 @@ export default function Drivers({ currentUser, adminProfile }) {
             </div>
             <div className="col-md-3">
               <div className="metric-card">
-                <span className="metric-label">Benefice total</span>
-                <strong className="metric-value">{formatMoney(driverStats.totalBenefit)}</strong>
-              </div>
-            </div>
-            <div className="col-md-2">
-              <div className="metric-card">
-                <span className="metric-label">Particulier</span>
-                <strong className="metric-value">{formatMoney(typeTotals.particulier)}</strong>
-              </div>
-            </div>
-            <div className="col-md-2">
-              <div className="metric-card">
-                <span className="metric-label">Assurance</span>
-                <strong className="metric-value">{formatMoney(typeTotals.assurance)}</strong>
-              </div>
-            </div>
-            <div className="col-md-2">
-              <div className="metric-card">
-                <span className="metric-label">Societe</span>
-                <strong className="metric-value">{formatMoney(typeTotals.societe)}</strong>
-              </div>
-            </div>
-            <div className="col-md-2">
-              <div className="metric-card metric-card--success">
-                <span className="metric-label">Traite</span>
+                <span className="metric-label">Paiement reel effectue</span>
                 <strong className="metric-value">{formatMoney(paidTotal)}</strong>
               </div>
             </div>
-            <div className="col-md-2">
-              <div className="metric-card metric-card--danger">
-                <span className="metric-label">Reste global</span>
-                <strong className="metric-value">{formatMoney(remainingTotal)}</strong>
+            <div className="col-md-6">
+              <div className={`metric-card ${netBalanceTotal >= 0 ? "metric-card--success" : "metric-card--danger"}`}>
+                <span className="metric-label">Solde net</span>
+                <strong className="metric-value">{formatMoney(Math.abs(netBalanceTotal))}</strong>
+                <div className="small text-muted mt-2">
+                  {netBalanceTotal > 0
+                    ? "Le chauffeur doit encore ce montant"
+                    : netBalanceTotal < 0
+                    ? "Nous devons encore ce montant au chauffeur"
+                    : "Solde equilibre"}
+                </div>
               </div>
             </div>
           </div>
@@ -630,21 +991,24 @@ export default function Drivers({ currentUser, adminProfile }) {
                 <thead>
                   <tr>
                     <th>Mois</th>
-                    <th>Benefice</th>
+                    <th>Revenu chauffeur</th>
                     <th>Particulier</th>
                     <th>Assurance</th>
                     <th>Societe</th>
-                    <th>Commission payee</th>
-                    <th>Paiement assurance</th>
-                    <th>Paiement societe</th>
-                    <th>Traite</th>
-                    <th>Reste</th>
+                    <th>Particulier regle</th>
+                    <th>Assurance reglee</th>
+                    <th>Societe reglee</th>
+                    <th>Paiement reel</th>
+                    <th>Solde net</th>
+                    <th>Particulier</th>
+                    <th>Reglage</th>
+                    <th>Annulation</th>
                   </tr>
                 </thead>
                 <tbody>
                   {monthlyRows.length === 0 ? (
                     <tr>
-                      <td colSpan="10" className="text-center text-muted py-4">
+                      <td colSpan="13" className="text-center text-muted py-4">
                         Aucun mois a afficher.
                       </td>
                     </tr>
@@ -652,69 +1016,60 @@ export default function Drivers({ currentUser, adminProfile }) {
                     monthlyRows.map((row) => (
                       <tr key={row.month}>
                         <td>{row.month}</td>
-                        <td>{formatMoney(row.benefit)}</td>
+                        <td>
+                          <div className="small">
+                            <div>Part: {formatMoney(row.revenueParticulier)}</div>
+                            <div>Ass: {formatMoney(row.revenueAssurance)}</div>
+                            <div>Soc: {formatMoney(row.revenueSociete)}</div>
+                          </div>
+                        </td>
                         <td>{formatMoney(row.particulier)}</td>
                         <td>{formatMoney(row.assurance)}</td>
                         <td>{formatMoney(row.societe)}</td>
+                        <td>{formatMoney(row.paidParticulier)}</td>
+                        <td>{formatMoney(row.paidAssurance)}</td>
+                        <td>{formatMoney(row.paidSociete)}</td>
+                        <td>{formatMoney(row.cashOut)}</td>
+                        <td>
+                          <span className={`badge ${row.netBalance > 0 ? "bg-success" : row.netBalance < 0 ? "bg-danger" : "bg-secondary"}`}>
+                            {row.netBalance > 0
+                              ? `Chauffeur doit ${formatMoney(row.netBalance)}`
+                              : row.netBalance < 0
+                              ? `Nous devons ${formatMoney(Math.abs(row.netBalance))}`
+                              : "Equilibre"}
+                          </span>
+                        </td>
                         <td>
                           {row.payableParticulier > 0 ? (
-                            <div className="form-check">
-                              <input
-                                className="form-check-input"
-                                type="checkbox"
-                                checked={row.remainingParticulier <= 0 && row.paidParticulier > 0}
-                                onChange={() =>
-                                  row.remainingParticulier > 0
-                                    ? handleMonthPayment(row.month, "particulier")
-                                    : undoMonthPayment(row.month, "particulier")
-                                }
-                              />
-                              <label className="form-check-label small">
-                                {row.remainingParticulier > 0 ? "Non payee" : "Payee"}
-                              </label>
-                            </div>
+                            row.remainingParticulier > 0 ? (
+                              <button className="btn btn-outline-primary btn-sm" onClick={() => handleMonthlyParticulierSettlement(row)}>
+                                Marquer paye
+                              </button>
+                            ) : (
+                              <span className="badge bg-success">Paye</span>
+                            )
                           ) : (
                             "-"
                           )}
                         </td>
                         <td>
-                          <div className="d-flex flex-column gap-2">
-                            <span className="small text-muted">
-                              {formatMoney(row.paidAssurance)} / {formatMoney(row.payableAssurance)}
-                            </span>
-                            {row.remainingAssurance > 0 ? (
-                              <button className="btn btn-outline-success btn-sm" onClick={() => handleMonthPayment(row.month, "assurance")}>
-                                Payer
-                              </button>
-                            ) : row.paidAssurance > 0 ? (
-                              <button className="btn btn-outline-danger btn-sm" onClick={() => undoMonthPayment(row.month, "assurance")}>
-                                Annuler
-                              </button>
-                            ) : (
-                              "-"
-                            )}
-                          </div>
+                          {row.amountWeOweDriver > 0 ? (
+                            <button className="btn btn-outline-success btn-sm" onClick={() => handleMonthlyBalancePayment(row)}>
+                              Regler le solde
+                            </button>
+                          ) : (
+                            "-"
+                          )}
                         </td>
                         <td>
-                          <div className="d-flex flex-column gap-2">
-                            <span className="small text-muted">
-                              {formatMoney(row.paidSociete)} / {formatMoney(row.payableSociete)}
-                            </span>
-                            {row.remainingSociete > 0 ? (
-                              <button className="btn btn-outline-dark btn-sm" onClick={() => handleMonthPayment(row.month, "societe")}>
-                                Payer
-                              </button>
-                            ) : row.paidSociete > 0 ? (
-                              <button className="btn btn-outline-danger btn-sm" onClick={() => undoMonthPayment(row.month, "societe")}>
-                                Annuler
-                              </button>
-                            ) : (
-                              "-"
-                            )}
-                          </div>
+                          {row.hasMonthlyPayments ? (
+                            <button className="btn btn-outline-danger btn-sm" onClick={() => undoMonthPayments(row.month)}>
+                              Annuler mois
+                            </button>
+                          ) : (
+                            "-"
+                          )}
                         </td>
-                        <td>{formatMoney(row.paidAmount)}</td>
-                        <td>{formatMoney(row.remaining)}</td>
                       </tr>
                     ))
                   )}
@@ -734,36 +1089,88 @@ export default function Drivers({ currentUser, adminProfile }) {
                     <th>Depart</th>
                     <th>Destination</th>
                     <th>Km</th>
-                    <th>Prix</th>
-                    <th>Benefice</th>
+                    <th>Revenu</th>
+                    <th>Commission</th>
+                    {manualTripPaymentMode ? <th>Solde course</th> : null}
+                    {manualTripPaymentMode ? <th>Action paiement</th> : null}
                     <th>Dossier / Societe</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {driverTrips.map((trip) => (
-                    <tr key={`${trip.tripType}-${trip.id}`}>
-                      <td>{trip.date ? trip.date.toLocaleDateString("fr-FR") : "-"}</td>
-                      <td>
-                        <span
-                          className={`badge ${
-                            trip.tripType === "particulier"
-                              ? "bg-primary"
-                              : trip.tripType === "assurance"
-                              ? "bg-success"
-                              : "bg-dark"
-                          }`}
-                        >
-                          {trip.tripType}
-                        </span>
-                      </td>
-                      <td>{trip.depart}</td>
-                      <td>{trip.destination}</td>
-                      <td>{trip.km}</td>
-                      <td>{formatMoney(trip.price)}</td>
-                      <td>{formatMoney(trip.commission)}</td>
-                      <td>{trip.companyName || trip.numeroDossier || "-"}</td>
-                    </tr>
-                  ))}
+                  {driverTrips.map((trip) => {
+                    const tripPayment = paymentByTrip[trip.id];
+                    const monthRow = monthlyRowsMap[getMonthKey(trip.date)] || null;
+                    const coveredAmount = tripPayment?.paidAmount || 0;
+                    const remainingAmount = Math.max(trip.payableAmount - coveredAmount, 0);
+                    const isPaidByMonth =
+                      trip.tripType === "particulier"
+                        ? Boolean(monthRow && monthRow.payableParticulier > 0 && monthRow.remainingParticulier <= 0)
+                        : Boolean(
+                            monthRow &&
+                              ((trip.tripType === "assurance" && monthRow.payableAssurance > 0 && monthRow.remainingAssurance <= 0) ||
+                                (trip.tripType === "societe" && monthRow.payableSociete > 0 && monthRow.remainingSociete <= 0))
+                          );
+                    const isPaid = isPaidByMonth || (remainingAmount <= 0 && coveredAmount > 0);
+                    const cashOut = tripPayment?.cashOut || 0;
+                    const offsetParticulier = tripPayment?.offsetParticulier || 0;
+
+                    return (
+                      <tr key={`${trip.tripType}-${trip.id}`}>
+                        <td>{trip.date ? trip.date.toLocaleDateString("fr-FR") : "-"}</td>
+                        <td>
+                          <span
+                            className={`badge ${
+                              trip.tripType === "particulier"
+                                ? "bg-primary"
+                                : trip.tripType === "assurance"
+                                ? "bg-success"
+                                : "bg-dark"
+                            }`}
+                          >
+                            {trip.tripType}
+                          </span>
+                        </td>
+                        <td>{trip.depart}</td>
+                        <td>{trip.destination}</td>
+                        <td>{trip.km}</td>
+                        <td>{formatMoney(trip.price)}</td>
+                        <td>{formatMoney(trip.commission)}</td>
+                        {manualTripPaymentMode ? (
+                          <td>
+                            {trip.tripType === "particulier" ? (
+                              <span className={`badge ${isPaid ? "bg-success" : "bg-warning text-dark"}`}>
+                                {isPaid ? "Commission reglee" : `Reste ${formatMoney(remainingAmount)}`}
+                              </span>
+                            ) : (
+                              <div className="small">
+                                <div>Montant: {formatMoney(trip.payableAmount)}</div>
+                                <div>Cash: {formatMoney(cashOut)}</div>
+                                <div>Compense: {formatMoney(offsetParticulier)}</div>
+                              </div>
+                            )}
+                          </td>
+                        ) : null}
+                        {manualTripPaymentMode ? (
+                          <td>
+                            {trip.tripType === "particulier" ? (
+                              <span className={`badge ${isPaid ? "bg-success" : "bg-warning text-dark"}`}>
+                                {isPaid ? "Commission reglee" : `Reste ${formatMoney(remainingAmount)}`}
+                              </span>
+                            ) : isPaid ? (
+                              <button className="btn btn-outline-danger btn-sm" onClick={() => undoTripPayment(trip)}>
+                                Annuler
+                              </button>
+                            ) : (
+                              <button className="btn btn-outline-success btn-sm" onClick={() => handleTripPayment(trip)}>
+                                Payer {formatMoney(trip.payableAmount)}
+                              </button>
+                            )}
+                          </td>
+                        ) : null}
+                        <td>{trip.companyName || trip.numeroDossier || "-"}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

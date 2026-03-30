@@ -53,6 +53,7 @@ function hasPageAccess(adminProfile, pageKey) {
 
 function App() {
   const [page, setPage] = useState("dashboard");
+  const [driverProfileId, setDriverProfileId] = useState("");
   const [drivers, setDrivers] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
   const [adminProfile, setAdminProfile] = useState(null);
@@ -137,6 +138,7 @@ function App() {
 
   useEffect(() => {
     if (visibleNavItems.length === 0) return;
+    if (page === "driverProfile") return;
     if (!visibleNavItems.some((item) => item.key === page)) {
       setPage(visibleNavItems[0].key);
     }
@@ -221,7 +223,29 @@ function App() {
       case "trips":
         return <TripsDashboard />;
       case "drivers":
-        return <Drivers currentUser={currentUser} adminProfile={adminProfile} />;
+        return (
+          <Drivers
+            currentUser={currentUser}
+            adminProfile={adminProfile}
+            onOpenProfile={(id) => {
+              setDriverProfileId(id);
+              setPage("driverProfile");
+            }}
+          />
+        );
+      case "driverProfile":
+        return (
+          <Drivers
+            currentUser={currentUser}
+            adminProfile={adminProfile}
+            profileMode
+            driverProfileId={driverProfileId}
+            onBackToList={() => {
+              setDriverProfileId("");
+              setPage("drivers");
+            }}
+          />
+        );
       case "assurance":
         return <Assurance currentUser={currentUser} adminProfile={adminProfile} />;
       case "store":

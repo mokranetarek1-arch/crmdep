@@ -2,13 +2,18 @@ import { useEffect, useMemo, useState } from "react";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "../firebase";
 
-const COMMISSION_RATE = 0.1;
-
 const getDayKey = (date) => date.toISOString().split("T")[0];
 const getMonthKey = (date) =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 const isConfirmedStatus = (value) => String(value || "").toLowerCase().includes("confirm");
 const formatMoney = (value) => `${Number(value || 0).toLocaleString("fr-FR")} DA`;
+const getRequestCommissionAmount = (row) => {
+  const explicitAmount = Number(row?.commissionAmount);
+  if (Number.isFinite(explicitAmount) && explicitAmount >= 0) return explicitAmount;
+  const rate = Number(row?.commissionRate);
+  const safeRate = Number.isFinite(rate) ? rate : 10;
+  return ((Number(row?.prix) || 0) * safeRate) / 100;
+};
 
 const parseDate = (value, fallback) => {
   if (value?.toDate) return value.toDate();
@@ -59,7 +64,7 @@ export default function TripsDashboard() {
               depart: data.depart || "-",
               destination: data.destination || "-",
               price,
-              commission: price * COMMISSION_RATE,
+              commission: getRequestCommissionAmount(data),
               status: data.status || "",
               tripType: "particulier",
               companyName: "",

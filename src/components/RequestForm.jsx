@@ -18,6 +18,8 @@ const defaultForm = {
   chauffeur: "",
   driverName: "",
   prix: "",
+  commissionRate: 10,
+  commissionAmount: "",
   panneType: "Panne",
   date: "",
   heure: "",
@@ -25,6 +27,12 @@ const defaultForm = {
 };
 
 const confirmedStatuses = ["Confirme", "Confirmé"];
+const getCommissionAmount = (price, rate) => {
+  const safePrice = Number(price) || 0;
+  const safeRate = Number(rate);
+  const commissionRate = Number.isFinite(safeRate) ? safeRate : 10;
+  return Number(((safePrice * commissionRate) / 100).toFixed(2));
+};
 
 export default function RequestForm({ drivers = [], editData = null, onSave, currentUser, adminProfile }) {
   const [form, setForm] = useState(defaultForm);
@@ -43,6 +51,8 @@ export default function RequestForm({ drivers = [], editData = null, onSave, cur
       driverName: editData.driverName || "",
       phone: editData.phone || "",
       status: editData.status || "En cours",
+      commissionRate: Number(editData.commissionRate ?? 10),
+      commissionAmount: Number(editData.commissionAmount ?? getCommissionAmount(editData.prix, editData.commissionRate || 10)),
     });
   }, [editData]);
 
@@ -88,6 +98,8 @@ export default function RequestForm({ drivers = [], editData = null, onSave, cur
       status: isInfoMotif ? "En cours" : form.status,
       driverId: isInfoMotif ? "" : form.chauffeur,
       driverName: isInfoMotif ? "" : form.driverName,
+      commissionRate: Number(form.commissionRate) || 10,
+      commissionAmount: getCommissionAmount(form.prix, form.commissionRate),
     };
 
     try {
@@ -230,6 +242,23 @@ export default function RequestForm({ drivers = [], editData = null, onSave, cur
                 <div className="col-md-3">
                   <label className="form-label">Prix (DA)</label>
                   <input type="number" className="form-control" value={form.prix} onChange={(event) => updateField("prix", event.target.value)} />
+                </div>
+                <div className="col-md-3">
+                  <label className="form-label">Commission %</label>
+                  <div className="input-group">
+                    <button type="button" className="btn btn-outline-secondary" onClick={() => updateField("commissionRate", 10)}>
+                      10%
+                    </button>
+                    <input
+                      type="number"
+                      className="form-control"
+                      value={form.commissionRate}
+                      onChange={(event) => updateField("commissionRate", event.target.value)}
+                    />
+                  </div>
+                  <div className="form-text">
+                    Commission calculee: {getCommissionAmount(form.prix, form.commissionRate).toLocaleString("fr-FR")} DA
+                  </div>
                 </div>
                 <div className="col-md-4">
                   <label className="form-label">Chauffeur</label>

@@ -4,6 +4,13 @@ import { db } from "../firebase";
 
 const isConfirmedStatus = (value) => String(value || "").toLowerCase().includes("confirm");
 const isCancelledStatus = (value) => String(value || "").toLowerCase().includes("annul");
+const getRequestCommissionAmount = (row) => {
+  const explicitAmount = Number(row?.commissionAmount);
+  if (Number.isFinite(explicitAmount) && explicitAmount >= 0) return explicitAmount;
+  const rate = Number(row?.commissionRate);
+  const safeRate = Number.isFinite(rate) ? rate : 10;
+  return ((Number(row?.prix) || 0) * safeRate) / 100;
+};
 
 const parseDate = (value) => {
   if (!value) return null;
@@ -68,7 +75,7 @@ export default function Statistics() {
   const cancelled = cancelledDispatch.length;
   const pending = pendingDispatch.length;
 
-  const dispatchCommission = confirmedDispatch.reduce((sum, row) => sum + (Number(row.prix) * 0.1 || 0), 0);
+  const dispatchCommission = confirmedDispatch.reduce((sum, row) => sum + getRequestCommissionAmount(row), 0);
   const assuranceCommission = filteredAssurance.reduce((sum, row) => sum + (Number(row.commission) || 0), 0);
   const societeCommission = filteredSociete.reduce((sum, row) => sum + (Number(row.commission) || 0), 0);
   const totalCommission = dispatchCommission + assuranceCommission + societeCommission;
@@ -93,7 +100,7 @@ export default function Statistics() {
       if (!row.date) return;
       const key = `${row.date.getFullYear()}-${String(row.date.getMonth() + 1).padStart(2, "0")}`;
       grouped[key] = grouped[key] || { dispatch: 0, assurance: 0, societe: 0 };
-      grouped[key].dispatch += Number(row.prix) * 0.1 || 0;
+      grouped[key].dispatch += getRequestCommissionAmount(row);
     });
 
     filteredAssurance.forEach((row) => {
