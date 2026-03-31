@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { collection, getDocs } from "firebase/firestore";
+import { collection, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
 
 const isConfirmedStatus = (value) => String(value || "").toLowerCase().includes("confirm");
@@ -27,29 +27,33 @@ export default function Statistics() {
   const [filterYear, setFilterYear] = useState("all");
 
   useEffect(() => {
-    const fetchData = async () => {
-      const reqSnap = await getDocs(collection(db, "requests"));
-      const b2bSnap = await getDocs(collection(db, "assuranceTrips"));
-      const drvSnap = await getDocs(collection(db, "drivers"));
-
+    const unsubscribeRequests = onSnapshot(collection(db, "requests"), (snapshot) => {
       setRequests(
-        reqSnap.docs.map((entry) => ({
+        snapshot.docs.map((entry) => ({
           ...entry.data(),
           date: parseDate(entry.data().date),
         }))
       );
+    });
 
+    const unsubscribeB2b = onSnapshot(collection(db, "assuranceTrips"), (snapshot) => {
       setB2bTrips(
-        b2bSnap.docs.map((entry) => ({
+        snapshot.docs.map((entry) => ({
           ...entry.data(),
           date: parseDate(entry.data().date),
         }))
       );
+    });
 
-      setDrivers(drvSnap.docs.map((entry) => entry.data()));
+    const unsubscribeDrivers = onSnapshot(collection(db, "drivers"), (snapshot) => {
+      setDrivers(snapshot.docs.map((entry) => entry.data()));
+    });
+
+    return () => {
+      unsubscribeRequests();
+      unsubscribeB2b();
+      unsubscribeDrivers();
     };
-
-    fetchData();
   }, []);
 
   const filterFn = (row) => {
@@ -61,8 +65,13 @@ export default function Statistics() {
 
   const filteredReq = requests.filter(filterFn);
   const filteredB2b = b2bTrips.filter(filterFn);
-  const filteredAssurance = filteredB2b.filter((row) => row.typePayment === "assurance");
-  const filteredSociete = filteredB2b.filter((row) => row.typePayment === "societe");
+  const confirmedB2b = filteredB2b.filter((row) => isConfirmedStatus(row.status));
+  const cancelledB2b = filteredB2b.filter((row) => isCancelledStatus(row.status));
+  const pendingB2b = filteredB2b.filter(
+    (row) => !isConfirmedStatus(row.status) && !isCancelledStatus(row.status)
+  );
+  const filteredAssurance = confirmedB2b.filter((row) => row.typePayment === "assurance");
+  const filteredSociete = confirmedB2b.filter((row) => row.typePayment === "societe");
 
   const confirmedDispatch = filteredReq.filter((row) => isConfirmedStatus(row.status));
   const cancelledDispatch = filteredReq.filter((row) => isCancelledStatus(row.status));
@@ -71,9 +80,9 @@ export default function Statistics() {
   );
 
   const totalTrips = filteredReq.length + filteredB2b.length;
-  const confirmed = confirmedDispatch.length + filteredB2b.length;
-  const cancelled = cancelledDispatch.length;
-  const pending = pendingDispatch.length;
+  const confirmed = confirmedDispatch.length + confirmedB2b.length;
+  const cancelled = cancelledDispatch.length + cancelledB2b.length;
+  const pending = pendingDispatch.length + pendingB2b.length;
 
   const dispatchCommission = confirmedDispatch.reduce((sum, row) => sum + getRequestCommissionAmount(row), 0);
   const assuranceCommission = filteredAssurance.reduce((sum, row) => sum + (Number(row.commission) || 0), 0);
